@@ -1,4 +1,85 @@
-/// <reference types="@cloudflare/workers-types" />
+
+// Removed /// <reference types="@cloudflare/workers-types" />
+
+interface D1Result<T = unknown> {
+  results: T[];
+  success: boolean;
+  meta: any;
+  error?: string;
+}
+
+interface D1PreparedStatement {
+  bind(...values: any[]): D1PreparedStatement;
+  first<T = unknown>(colName?: string): Promise<T | null>;
+  run<T = unknown>(): Promise<D1Result<T>>;
+  all<T = unknown>(): Promise<D1Result<T>>;
+}
+
+interface D1Database {
+  prepare(query: string): D1PreparedStatement;
+  dump(): Promise<ArrayBuffer>;
+  batch<T = unknown>(statements: D1PreparedStatement[]): Promise<D1Result<T>[]>;
+  exec<T = unknown>(query: string): Promise<D1Result<T>>;
+}
+
+interface R2HTTPMetadata {
+  contentType?: string;
+  contentLanguage?: string;
+  contentDisposition?: string;
+  contentEncoding?: string;
+  cacheControl?: string;
+  cacheExpiry?: Date;
+}
+
+interface R2Object {
+  body: ReadableStream;
+  bodyUsed: boolean;
+  arrayBuffer(): Promise<ArrayBuffer>;
+  text(): Promise<string>;
+  json<T>(): Promise<T>;
+  blob(): Promise<Blob>;
+  key: string;
+  version: string;
+  size: number;
+  etag: string;
+  httpEtag: string;
+  uploaded: Date;
+  httpMetadata: R2HTTPMetadata;
+  customMetadata: Record<string, string>;
+  writeHttpMetadata(headers: Headers): void;
+}
+
+interface R2ObjectBody extends R2Object {
+  body: ReadableStream;
+}
+
+interface R2UploadedPart {
+  partNumber: number;
+  etag: string;
+}
+
+interface R2MultipartUpload {
+  key: string;
+  uploadId: string;
+  uploadPart(partNumber: number, value: ReadableStream | ArrayBuffer | string): Promise<R2UploadedPart>;
+  abort(): Promise<void>;
+  complete(uploadedParts: R2UploadedPart[]): Promise<R2Object>;
+}
+
+interface R2Bucket {
+  head(key: string): Promise<R2Object | null>;
+  get(key: string, options?: any): Promise<R2ObjectBody | null>;
+  put(key: string, value: ReadableStream | ArrayBuffer | string | File | null, options?: any): Promise<R2Object>;
+  delete(keys: string | string[]): Promise<void>;
+  list(options?: any): Promise<any>;
+  createMultipartUpload(key: string, options?: any): Promise<R2MultipartUpload>;
+  resumeMultipartUpload(key: string, uploadId: string): R2MultipartUpload;
+}
+
+interface ExecutionContext {
+  waitUntil(promise: Promise<any>): void;
+  passThroughOnException(): void;
+}
 
 interface Env {
 	DB: D1Database;

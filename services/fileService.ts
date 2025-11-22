@@ -269,6 +269,7 @@ class LargeFileUpload implements UploadController {
     private totalChunks = 0;
     
     private currentXhr: XMLHttpRequest | null = null;
+    private hasUnloadListener = false;
     
     // States
     private isPaused = false;
@@ -292,6 +293,9 @@ class LargeFileUpload implements UploadController {
         }
 
         if(this.isRunning) return;
+
+        this.setupUnloadListener();
+
         this.isPaused = false;
         this.isCancelled = false;
         this.runUploadLoop();
@@ -305,6 +309,8 @@ class LargeFileUpload implements UploadController {
             this.start();
             return;
         }
+
+        this.setupUnloadListener();
 
         // If it was error or paused, we restart loop
         this.isPaused = false;
@@ -320,6 +326,7 @@ class LargeFileUpload implements UploadController {
             this.currentXhr.abort();
             this.currentXhr = null;
         }
+        // Do not remove unload listener on pause, we want to cleanup if user leaves while paused
         this.onStatusChange('paused');
     }
 
@@ -332,6 +339,7 @@ class LargeFileUpload implements UploadController {
             this.currentXhr = null;
         }
         
+        this.teardownUnloadListener();
         this.sendAbortRequest();
         this.onStatusChange('cancelled');
     }
@@ -363,12 +371,25 @@ class LargeFileUpload implements UploadController {
         this.sendAbortRequest();
     };
 
+    private setupUnloadListener() {
+        if (!this.hasUnloadListener) {
+            window.addEventListener('beforeunload', this.beforeUnloadHandler);
+            this.hasUnloadListener = true;
+        }
+    }
+
+    private teardownUnloadListener() {
+        if (this.hasUnloadListener) {
+            window.removeEventListener('beforeunload', this.beforeUnloadHandler);
+            this.hasUnloadListener = false;
+        }
+    }
+
     private async runUploadLoop() {
         this.isRunning = true;
         this.onStatusChange('uploading');
         
-        // Register unload handler to cleanup if browser closes
-        window.addEventListener('beforeunload', this.beforeUnloadHandler);
+        // Listener management moved to start/resume/cancel/complete
 
         try {
             // 1. Init (if not done)
@@ -429,9 +450,7 @@ class LargeFileUpload implements UploadController {
                  this.isRunning = false;
                  this.onStatusChange('error', (err as Error).message || 'Upload failed');
             }
-        } finally {
-            window.removeEventListener('beforeunload', this.beforeUnloadHandler);
-        }
+        } 
     }
 
     private async initMultipart() {
@@ -507,6 +526,9 @@ class LargeFileUpload implements UploadController {
         }
 
         const data = await res.json() as { file: R2File };
+        
+        this.teardownUnloadListener();
+        
         this.onComplete(data.file);
         this.onStatusChange('complete');
     }

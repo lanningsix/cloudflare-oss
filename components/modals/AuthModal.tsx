@@ -19,16 +19,18 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, initialMode = 'log
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  if (!isOpen) return null;
-
-  // Sync mode if props change
+  // Sync mode if props change - Moved before conditional return to prevent React Error #310
   React.useEffect(() => {
-      setMode(initialMode);
-      setError(null);
-      setUsername('');
-      setPassword('');
-      setConfirmPassword('');
+      if (isOpen) {
+          setMode(initialMode);
+          setError(null);
+          setUsername('');
+          setPassword('');
+          setConfirmPassword('');
+      }
   }, [initialMode, isOpen]);
+
+  if (!isOpen) return null;
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
