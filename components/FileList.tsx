@@ -69,13 +69,13 @@ export const FileList: React.FC<FileListProps> = ({
       )}
 
       {loading && files.length === 0 ? (
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 sm:gap-6">
-          {[1, 2, 3, 4].map((n) => (
-            <div key={n} className="h-64 bg-gray-200 rounded-xl animate-pulse" />
+        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-3 sm:gap-6">
+          {[1, 2, 3, 4, 5, 6].map((n) => (
+            <div key={n} className="h-48 bg-gray-200 rounded-xl animate-pulse" />
           ))}
         </div>
       ) : currentFolderFiles.length > 0 ? (
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4 sm:gap-6 pb-24 sm:pb-0">
+        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-3 sm:gap-6 pb-24 sm:pb-0">
           {currentFolderFiles.map((file) => (
             <FileCard 
               key={file.id} 
