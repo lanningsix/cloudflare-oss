@@ -1,5 +1,4 @@
-
-import React, { useState } from 'react';
+import React, { useState, useRef } from 'react';
 import { File as FileIcon, Image as ImageIcon, Trash2, Download, FileText, Film, Music, Copy, Check, Folder, Square, CheckSquare } from 'lucide-react';
 import { R2File } from '../types';
 import { useLanguage } from '../contexts/LanguageContext';
@@ -15,6 +14,10 @@ interface FileCardProps {
 export const FileCard: React.FC<FileCardProps> = ({ file, isSelected, onToggleSelect, onDelete, onNavigate }) => {
   const { t } = useLanguage();
   const [copied, setCopied] = useState(false);
+  
+  // Long press logic state
+  const longPressTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const isLongPress = useRef(false);
 
   const formatSize = (bytes: number) => {
     if (bytes === 0) return '0 B';
@@ -48,12 +51,45 @@ export const FileCard: React.FC<FileCardProps> = ({ file, isSelected, onToggleSe
   const isFolder = file.type === 'directory';
 
   const handleCardClick = (e: React.MouseEvent) => {
+    // If a long press just happened, ignore the click
+    if (isLongPress.current) {
+        isLongPress.current = false;
+        return;
+    }
+    
     if (isFolder) {
       e.preventDefault();
       const parentPath = file.folder || '/';
       const normalizedParent = parentPath.endsWith('/') ? parentPath : parentPath + '/';
       const newPath = normalizedParent + file.name + '/';
       onNavigate(newPath);
+    }
+  };
+
+  const handleTouchStart = () => {
+    isLongPress.current = false;
+    longPressTimer.current = setTimeout(() => {
+        isLongPress.current = true;
+        if (navigator.vibrate) navigator.vibrate(50);
+        onToggleSelect(file.id);
+    }, 500);
+  };
+
+  const handleTouchEnd = (e: React.TouchEvent) => {
+    if (longPressTimer.current) {
+        clearTimeout(longPressTimer.current);
+        longPressTimer.current = null;
+    }
+    // If long press triggered, prevent default behavior (like navigation link click simulation) if possible
+    if (isLongPress.current && e.cancelable) {
+        e.preventDefault();
+    }
+  };
+
+  const handleTouchMove = () => {
+    if (longPressTimer.current) {
+        clearTimeout(longPressTimer.current);
+        longPressTimer.current = null;
     }
   };
 
@@ -71,10 +107,18 @@ export const FileCard: React.FC<FileCardProps> = ({ file, isSelected, onToggleSe
   return (
     <div 
       onClick={handleCardClick}
-      className={`group relative bg-white border rounded-xl overflow-hidden transition-all duration-200 flex flex-col
-        ${isSelected ? 'border-indigo-500 ring-2 ring-indigo-500 ring-offset-2' : 'border-gray-200 hover:shadow-md'}
+      onTouchStart={handleTouchStart}
+      onTouchEnd={handleTouchEnd}
+      onTouchMove={handleTouchMove}
+      className={`group relative bg-white border rounded-xl overflow-hidden transition-all duration-200 flex flex-col select-none
+        ${isSelected ? 'border-indigo-500 ring-2 ring-indigo-500 ring-offset-2 bg-indigo-50/10' : 'border-gray-200 hover:shadow-md'}
         ${isFolder ? 'cursor-pointer hover:border-yellow-400' : ''}
+        active:scale-[0.99]
       `}
+      onContextMenu={(e) => {
+          // Prevent context menu if we just long pressed to select to avoid conflicts
+          if (isLongPress.current) e.preventDefault();
+      }}
     >
       {/* Selection Checkbox - Always visible if selected, else on group hover */}
       <div 
@@ -92,55 +136,18 @@ export const FileCard: React.FC<FileCardProps> = ({ file, isSelected, onToggleSe
           <img 
             src={file.url} 
             alt={file.name} 
-            className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-105" 
+            className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-105 pointer-events-none" 
           />
         ) : (
           getIcon()
         )}
-        
-        {/* Overlay Actions - Hide if selecting to avoid clutter, or keep it? Hiding makes selection cleaner. */}
-        {!isSelected && (
-            <div className="absolute inset-0 bg-black/0 group-hover:bg-black/40 transition-colors duration-200 flex items-center justify-center gap-3 opacity-0 group-hover:opacity-100 pointer-events-none group-hover:pointer-events-auto">
-                {!isFolder && (
-                <>
-                    <button 
-                    onClick={handleCopyLink}
-                    className={`p-2.5 rounded-full transition-transform hover:scale-110 ${copied ? 'bg-green-50 text-green-600' : 'bg-white text-gray-700 hover:bg-gray-100'}`}
-                    title={t('copy_link')}
-                    >
-                    {copied ? <Check className="w-5 h-5" /> : <Copy className="w-5 h-5" />}
-                    </button>
-                    <a 
-                    href={file.url} 
-                    target="_blank" 
-                    rel="noreferrer"
-                    onClick={(e) => e.stopPropagation()}
-                    className="p-2.5 bg-white rounded-full hover:bg-gray-100 text-gray-700 transition-transform hover:scale-110"
-                    title={t('download')}
-                    >
-                    <Download className="w-5 h-5" />
-                    </a>
-                </>
-                )}
-                <button 
-                onClick={(e) => {
-                    e.stopPropagation();
-                    onDelete(file);
-                }}
-                className="p-2.5 bg-white rounded-full hover:bg-red-50 text-red-600 transition-transform hover:scale-110"
-                title={t('delete_btn')}
-                >
-                <Trash2 className="w-5 h-5" />
-                </button>
-            </div>
-        )}
       </div>
 
-      {/* Info Area */}
-      <div className="p-4 flex flex-col flex-1 justify-between">
-        <div>
+      {/* Info & Actions Area */}
+      <div className="p-3 flex flex-col flex-1">
+        <div className="mb-2">
           <div className="flex items-start justify-between gap-2">
-            <h4 className={`font-medium truncate text-sm mb-1 ${isSelected ? 'text-indigo-700' : 'text-gray-900'}`} title={file.name}>
+            <h4 className={`font-medium truncate text-sm mb-0.5 ${isSelected ? 'text-indigo-700' : 'text-gray-900'}`} title={file.name}>
               {file.name}
             </h4>
           </div>
@@ -150,11 +157,46 @@ export const FileCard: React.FC<FileCardProps> = ({ file, isSelected, onToggleSe
         </div>
         
         {!isFolder && (
-          <div className="mt-4 flex items-center justify-between text-xs text-gray-400">
+          <div className="flex items-center justify-between text-xs text-gray-400 mb-3">
             <span>{formatSize(file.size)}</span>
             <span>{formatDate(file.uploadedAt)}</span>
           </div>
         )}
+
+        {/* Permanent Action Bar */}
+        <div className="mt-auto pt-2 border-t border-gray-100 flex items-center justify-end gap-2">
+             {!isFolder && (
+                <>
+                    <button 
+                        onClick={handleCopyLink}
+                        className={`p-2 rounded-md transition-colors flex items-center justify-center ${copied ? 'bg-green-50 text-green-600' : 'text-gray-500 hover:bg-gray-100 hover:text-gray-700'}`}
+                        title={t('copy_link')}
+                    >
+                        {copied ? <Check className="w-4 h-4" /> : <Copy className="w-4 h-4" />}
+                    </button>
+                    <a 
+                        href={file.url} 
+                        target="_blank" 
+                        rel="noreferrer"
+                        onClick={(e) => e.stopPropagation()}
+                        className="p-2 rounded-md text-gray-500 hover:bg-gray-100 hover:text-gray-700 transition-colors flex items-center justify-center"
+                        title={t('download')}
+                    >
+                        <Download className="w-4 h-4" />
+                    </a>
+                </>
+             )}
+             <button 
+                onClick={(e) => {
+                    e.stopPropagation();
+                    onDelete(file);
+                }}
+                className="p-2 rounded-md text-gray-400 hover:bg-red-50 hover:text-red-600 transition-colors flex items-center justify-center"
+                title={t('delete_btn')}
+             >
+                <Trash2 className="w-4 h-4" />
+             </button>
+        </div>
       </div>
     </div>
   );

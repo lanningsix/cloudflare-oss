@@ -97,8 +97,59 @@ export default function App() {
       return;
     }
 
-    setIsUploadPanelOpen(true);
     const uploadBaseFolder = currentPath;
+
+    // 1. Check and create missing folder structure
+    const foldersToCreate = new Map<string, { name: string, parent: string }>();
+
+    filesToUpload.forEach(file => {
+        // Determine relative path (e.g. "MyFolder/Sub/file.txt")
+        const relativePath = file.path || (file as any).webkitRelativePath || file.name;
+        const parts = relativePath.split('/');
+        
+        // If only filename (len 1), no new folders needed relative to current path
+        if (parts.length <= 1) return;
+
+        // Directories are all parts except the last one
+        const dirParts = parts.slice(0, -1);
+        let currentParent = uploadBaseFolder;
+
+        dirParts.forEach(part => {
+             const expectedFolderKey = `${currentParent}${part}/`;
+             
+             if (!foldersToCreate.has(expectedFolderKey)) {
+                 // Check if folder already exists in our file list
+                 const exists = files.some(f => 
+                     f.type === 'directory' && 
+                     f.name === part && 
+                     f.folder === currentParent
+                 );
+
+                 if (!exists) {
+                     foldersToCreate.set(expectedFolderKey, { name: part, parent: currentParent });
+                 }
+             }
+             currentParent = expectedFolderKey;
+        });
+    });
+
+    // If we have folders to create, do it now
+    if (foldersToCreate.size > 0) {
+        const sortedFolders = Array.from(foldersToCreate.values())
+            .sort((a, b) => a.parent.length - b.parent.length); // Create parents first
+        
+        try {
+            await Promise.all(sortedFolders.map(f => createFolder(f.name, f.parent)));
+            // Refresh list so folders appear immediately
+            fetchFiles(); 
+        } catch(e) {
+            console.error("Failed to create folder structure", e);
+            setToast({ msg: t('toast_folder_failed'), type: 'error' });
+        }
+    }
+
+    // 2. Start File Uploads
+    setIsUploadPanelOpen(true);
 
     filesToUpload.forEach(file => {
        const queueId = crypto.randomUUID();
@@ -117,6 +168,14 @@ export default function App() {
                const relativeFolder = file.path.substring(0, lastSlash);
                targetFolder = `${uploadBaseFolder}${relativeFolder}/`;
            }
+       } else if ((file as any).webkitRelativePath) {
+            // Fallback for directory input if .path not manually set
+            const p = (file as any).webkitRelativePath as string;
+            const lastSlash = p.lastIndexOf('/');
+            if (lastSlash !== -1) {
+                const relativeFolder = p.substring(0, lastSlash);
+                targetFolder = `${uploadBaseFolder}${relativeFolder}/`;
+            }
        }
 
        const controller = createUpload(

@@ -86,6 +86,25 @@ interface Env {
 	MY_BUCKET: R2Bucket;
 }
 
+interface UserRecord {
+    id: string;
+    username: string;
+    password: string;
+    created_at: number;
+}
+
+interface FileRecord {
+    id: string;
+    key: string;
+    name: string;
+    size: number;
+    type: string;
+    uploadedAt: number;
+    url: string;
+    folder: string;
+    owner_id: string;
+}
+
 // Helper for hashing passwords
 async function hashPassword(password: string): Promise<string> {
 	const msgBuffer = new TextEncoder().encode(password);
@@ -174,7 +193,7 @@ export default {
 					return new Response(JSON.stringify({ error: 'Username and password required' }), { status: 400, headers: corsHeaders });
 				}
 
-				const user = await env.DB.prepare('SELECT * FROM users WHERE username = ?').bind(username).first();
+				const user = await env.DB.prepare('SELECT * FROM users WHERE username = ?').bind(username).first<UserRecord>();
 
 				if (!user) {
 					return new Response(JSON.stringify({ error: 'Invalid credentials' }), { status: 401, headers: corsHeaders });
@@ -413,8 +432,8 @@ export default {
                 if (userType === 'guest') {
                     const countResult = await env.DB.prepare(
                         'SELECT COUNT(*) as count FROM files WHERE owner_id = ? AND type != "directory"'
-                    ).bind(userId).first();
-                    const count = countResult ? (countResult.count as number) : 0;
+                    ).bind(userId).first<{count: number}>();
+                    const count = countResult ? countResult.count : 0;
                     if (count >= 10) {
                         return new Response(JSON.stringify({ error: 'Upload limit reached (Max 10 files for guests).' }), { 
                             status: 403, 
@@ -533,9 +552,9 @@ export default {
 				if (userType === 'guest') {
 					const countResult = await env.DB.prepare(
 						'SELECT COUNT(*) as count FROM files WHERE owner_id = ? AND type != "directory"'
-					).bind(userId).first();
+					).bind(userId).first<{count: number}>();
 					
-					const count = countResult ? (countResult.count as number) : 0;
+					const count = countResult ? countResult.count : 0;
 					
 					if (count >= 10) {
 						return new Response(JSON.stringify({ error: 'Upload limit reached (Max 10 files for guests).' }), { 
@@ -586,7 +605,7 @@ export default {
 				if (!key) return new Response('Invalid key', { status: 400, headers: corsHeaders });
 
                 // Retrieve file metadata first to safely handle folder deletion structure
-                const fileRecord = await env.DB.prepare('SELECT * FROM files WHERE key = ? AND owner_id = ?').bind(key, userId).first();
+                const fileRecord = await env.DB.prepare('SELECT * FROM files WHERE key = ? AND owner_id = ?').bind(key, userId).first<FileRecord>();
 
                 if (!fileRecord) {
                     // Attempt to delete from R2 anyway to clean up orphans, then return success
