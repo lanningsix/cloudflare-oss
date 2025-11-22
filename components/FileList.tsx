@@ -13,6 +13,8 @@ interface FileListProps {
   onNavigate: (path: string) => void;
   onDelete: (file: R2File) => void;
   onSwitchToDemo: () => void;
+  selectedIds: Set<string>;
+  onToggleSelect: (id: string) => void;
 }
 
 export const FileList: React.FC<FileListProps> = ({
@@ -22,7 +24,9 @@ export const FileList: React.FC<FileListProps> = ({
   error,
   onNavigate,
   onDelete,
-  onSwitchToDemo
+  onSwitchToDemo,
+  selectedIds,
+  onToggleSelect
 }) => {
   const { t } = useLanguage();
 
@@ -76,6 +80,8 @@ export const FileList: React.FC<FileListProps> = ({
             <FileCard 
               key={file.id} 
               file={file} 
+              isSelected={selectedIds.has(file.id)}
+              onToggleSelect={onToggleSelect}
               onDelete={onDelete} 
               onNavigate={onNavigate}
             />

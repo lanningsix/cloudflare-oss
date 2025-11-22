@@ -76,7 +76,17 @@ const translations = {
     pause_upload: "Pause",
     cancel_upload: "Cancel",
     retry_upload: "Retry",
-    upload_paused: "Paused"
+    upload_paused: "Paused",
+    // Batch
+    selected_count: "{count} Selected",
+    batch_move: "Move",
+    batch_delete: "Delete",
+    clear_selection: "Clear",
+    move_files_title: "Move Files",
+    move_files_desc: "Select a destination folder.",
+    move_here: "Move Here",
+    toast_moved: "Successfully moved {count} files",
+    toast_move_failed: "Failed to move files"
   },
   zh: {
     app_title: "WorkerBox",
@@ -150,7 +160,17 @@ const translations = {
     pause_upload: "暂停",
     cancel_upload: "取消",
     retry_upload: "重试",
-    upload_paused: "已暂停"
+    upload_paused: "已暂停",
+    // Batch
+    selected_count: "已选择 {count} 项",
+    batch_move: "移动",
+    batch_delete: "删除",
+    clear_selection: "取消选择",
+    move_files_title: "移动文件",
+    move_files_desc: "选择目标文件夹。",
+    move_here: "移动到此处",
+    toast_moved: "成功移动 {count} 个文件",
+    toast_move_failed: "移动文件失败"
   },
   ja: {
     app_title: "WorkerBox",
@@ -224,7 +244,17 @@ const translations = {
     pause_upload: "一時停止",
     cancel_upload: "キャンセル",
     retry_upload: "再試行",
-    upload_paused: "一時停止中"
+    upload_paused: "一時停止中",
+    // Batch
+    selected_count: "{count} 選択中",
+    batch_move: "移動",
+    batch_delete: "削除",
+    clear_selection: "クリア",
+    move_files_title: "ファイルを移動",
+    move_files_desc: "移動先のフォルダを選択してください。",
+    move_here: "ここに移動",
+    toast_moved: "{count} 個のファイルを移動しました",
+    toast_move_failed: "ファイルの移動に失敗しました"
   }
 };
 

@@ -172,6 +172,42 @@ export const mockUploadFile = async (
 export const mockDeleteFile = async (id: string): Promise<void> => {
   await new Promise((resolve) => setTimeout(resolve, DELAY_MS / 2));
   const existing = getMockStore();
-  const filtered = existing.filter(f => f.id !== id);
-  setMockStore(filtered);
+  const fileToDelete = existing.find(f => f.id === id);
+  
+  if (fileToDelete?.type === 'directory') {
+      // Recursive mock delete
+      const folderPath = fileToDelete.folder === '/' ? `/${fileToDelete.name}/` : `${fileToDelete.folder}${fileToDelete.name}/`;
+      const filtered = existing.filter(f => f.id !== id && !f.folder.startsWith(folderPath));
+      setMockStore(filtered);
+  } else {
+      const filtered = existing.filter(f => f.id !== id);
+      setMockStore(filtered);
+  }
 };
+
+// Simulate Batch Delete
+export const mockBatchDelete = async (ids: string[]): Promise<void> => {
+    await new Promise((resolve) => setTimeout(resolve, DELAY_MS / 2));
+    const existing = getMockStore();
+    // Naive recursive delete not strictly implemented here for folders in batch in mock
+    // but sufficient for files.
+    const filtered = existing.filter(f => !ids.includes(f.id));
+    setMockStore(filtered);
+}
+
+// Simulate Move
+export const mockMoveFiles = async (ids: string[], destination: string): Promise<void> => {
+    await new Promise((resolve) => setTimeout(resolve, DELAY_MS / 2));
+    const existing = getMockStore();
+    
+    const updated = existing.map(f => {
+        if (ids.includes(f.id) && f.type !== 'directory') {
+            return {
+                ...f,
+                folder: destination
+            };
+        }
+        return f;
+    });
+    setMockStore(updated);
+}

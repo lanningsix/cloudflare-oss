@@ -1,8 +1,8 @@
 
 import React, { useEffect, useState, useCallback, useRef } from 'react';
-import { listFiles, createUpload, deleteFile, enableMockMode, isMockMode, createFolder, UploadController } from './services/fileService';
+import { listFiles, createUpload, deleteFile, enableMockMode, isMockMode, createFolder, UploadController, batchDeleteFiles, moveFiles } from './services/fileService';
 import { R2File, UploadProgress, FileWithPath } from './types';
-import { AlertCircle } from 'lucide-react';
+import { AlertCircle, Trash2, FolderInput, X } from 'lucide-react';
 import { useLanguage } from './contexts/LanguageContext';
 import { useAuth } from './contexts/AuthContext';
 
@@ -17,6 +17,7 @@ import { Toast } from './components/Toast';
 import { AuthModal } from './components/modals/AuthModal';
 import { CreateFolderModal } from './components/modals/CreateFolderModal';
 import { DeleteConfirmModal } from './components/modals/DeleteConfirmModal';
+import { MoveFileModal } from './components/modals/MoveFileModal';
 
 export default function App() {
   const { t } = useLanguage();
@@ -38,7 +39,12 @@ export default function App() {
   const [authMode, setAuthMode] = useState<'login' | 'register'>('login');
   
   const [fileToDelete, setFileToDelete] = useState<R2File | null>(null);
+  const [isMoveModalOpen, setIsMoveModalOpen] = useState(false);
+
   const [toast, setToast] = useState<{msg: string, type: 'success' | 'error'} | null>(null);
+
+  // Batch Selection
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
 
   // --- Data Fetching ---
 
@@ -66,6 +72,11 @@ export default function App() {
       return () => clearTimeout(timer);
     }
   }, [toast]);
+
+  // Clear selection when path changes
+  useEffect(() => {
+      setSelectedIds(new Set());
+  }, [currentPath]);
 
   // --- Computed ---
 
@@ -174,6 +185,52 @@ export default function App() {
     }
   };
 
+  const toggleSelection = (id: string) => {
+      const newSet = new Set(selectedIds);
+      if (newSet.has(id)) newSet.delete(id);
+      else newSet.add(id);
+      setSelectedIds(newSet);
+  };
+
+  const batchDeleteHandler = async () => {
+      if (selectedIds.size === 0) return;
+      if (!confirm(t('delete_confirm') + ` ${selectedIds.size} items?`)) return;
+
+      const ids = Array.from(selectedIds);
+      const prev = [...files];
+      setFiles(files.filter(f => !selectedIds.has(f.id)));
+      setSelectedIds(new Set());
+
+      try {
+          await batchDeleteFiles(ids);
+          setToast({ msg: t('toast_deleted'), type: 'success' });
+          fetchFiles(); // Refresh to be safe
+      } catch(e) {
+          setFiles(prev);
+          setToast({ msg: t('toast_delete_failed'), type: 'error' });
+      }
+  };
+
+  const batchMoveHandler = async (destination: string) => {
+      if (selectedIds.size === 0) return;
+      
+      const ids = Array.from(selectedIds);
+      const prev = [...files];
+      // Optimistic update
+      setFiles(files.map(f => ids.includes(f.id) ? { ...f, folder: destination } : f));
+      setSelectedIds(new Set());
+      setIsMoveModalOpen(false);
+
+      try {
+          await moveFiles(ids, destination);
+          setToast({ msg: t('toast_moved', { count: ids.length }), type: 'success' });
+          fetchFiles();
+      } catch(e) {
+          setFiles(prev);
+          setToast({ msg: t('toast_move_failed'), type: 'error' });
+      }
+  };
+
   // --- Render ---
 
   return (
@@ -221,8 +278,40 @@ export default function App() {
             fetchFiles();
             setToast({ msg: t('toast_demo_mode'), type: 'success' });
           }}
+          selectedIds={selectedIds}
+          onToggleSelect={toggleSelection}
         />
       </main>
+
+      {/* Batch Actions Bar */}
+      {selectedIds.size > 0 && (
+          <div className="fixed bottom-6 left-1/2 -translate-x-1/2 bg-white shadow-xl border border-gray-200 rounded-full px-6 py-3 z-50 flex items-center gap-4 animate-[slideUp_0.2s_ease-out]">
+              <span className="font-medium text-gray-700 text-sm whitespace-nowrap">
+                  {t('selected_count', { count: selectedIds.size })}
+              </span>
+              <div className="h-4 w-px bg-gray-300"></div>
+              <button 
+                  onClick={() => setIsMoveModalOpen(true)}
+                  className="flex items-center gap-2 text-sm font-medium text-gray-600 hover:text-indigo-600 transition-colors"
+              >
+                  <FolderInput className="w-4 h-4" />
+                  {t('batch_move')}
+              </button>
+              <button 
+                  onClick={batchDeleteHandler}
+                  className="flex items-center gap-2 text-sm font-medium text-gray-600 hover:text-red-600 transition-colors"
+              >
+                  <Trash2 className="w-4 h-4" />
+                  {t('batch_delete')}
+              </button>
+              <button 
+                  onClick={() => setSelectedIds(new Set())}
+                  className="p-1 bg-gray-100 rounded-full hover:bg-gray-200 transition-colors"
+              >
+                  <X className="w-4 h-4 text-gray-500" />
+              </button>
+          </div>
+      )}
 
       <UploadQueuePanel 
         queue={uploadQueue}
@@ -259,6 +348,15 @@ export default function App() {
         file={fileToDelete} 
         onClose={() => setFileToDelete(null)} 
         onConfirm={deleteHandler} 
+      />
+      
+      <MoveFileModal 
+        isOpen={isMoveModalOpen}
+        onClose={() => setIsMoveModalOpen(false)}
+        onMove={batchMoveHandler}
+        currentPath={currentPath}
+        allFiles={files}
+        movingFileIds={Array.from(selectedIds)}
       />
 
       <footer className="hidden sm:block py-6 text-center text-sm text-gray-400 px-4">

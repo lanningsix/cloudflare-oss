@@ -1,6 +1,6 @@
 
 import { R2File } from '../types';
-import { mockListFiles, mockUploadFile, mockDeleteFile, mockCreateFolder } from './mockBackend';
+import { mockListFiles, mockUploadFile, mockDeleteFile, mockCreateFolder, mockBatchDelete, mockMoveFiles } from './mockBackend';
 
 // Cloudflare Worker API URL
 const API_BASE_URL = (import.meta as any).env?.VITE_WORKER_URL || 'https://oss-server.dundun.uno/api';
@@ -81,6 +81,41 @@ export const createFolder = async (name: string, parent: string): Promise<R2File
     throw error;
   }
 };
+
+export const batchDeleteFiles = async (fileIds: string[]): Promise<void> => {
+    if (useMock) return mockBatchDelete(fileIds);
+    
+    try {
+        const headers = getAuthHeaders();
+        const response = await fetch(`${API_BASE_URL}/files/batch-delete`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', ...headers },
+            body: JSON.stringify({ fileIds })
+        });
+        if (!response.ok) throw new Error('Batch delete failed');
+    } catch (error) {
+        console.error("API Error (Batch Delete)", error);
+        throw error;
+    }
+};
+
+export const moveFiles = async (fileIds: string[], destination: string): Promise<void> => {
+    if (useMock) return mockMoveFiles(fileIds, destination);
+
+    try {
+        const headers = getAuthHeaders();
+        const response = await fetch(`${API_BASE_URL}/files/move`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', ...headers },
+            body: JSON.stringify({ fileIds, destination })
+        });
+        if (!response.ok) throw new Error('Move files failed');
+    } catch(error) {
+        console.error("API Error (Move Files)", error);
+        throw error;
+    }
+};
+
 
 // --- NEW UPLOAD LOGIC WITH CONTROLLERS ---
 

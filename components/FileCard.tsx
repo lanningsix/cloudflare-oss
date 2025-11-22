@@ -1,15 +1,18 @@
+
 import React, { useState } from 'react';
-import { File as FileIcon, Image as ImageIcon, Trash2, Download, FileText, Film, Music, Copy, Check, Folder } from 'lucide-react';
+import { File as FileIcon, Image as ImageIcon, Trash2, Download, FileText, Film, Music, Copy, Check, Folder, Square, CheckSquare } from 'lucide-react';
 import { R2File } from '../types';
 import { useLanguage } from '../contexts/LanguageContext';
 
 interface FileCardProps {
   file: R2File;
+  isSelected: boolean;
+  onToggleSelect: (id: string) => void;
   onDelete: (file: R2File) => void;
   onNavigate: (path: string) => void;
 }
 
-export const FileCard: React.FC<FileCardProps> = ({ file, onDelete, onNavigate }) => {
+export const FileCard: React.FC<FileCardProps> = ({ file, isSelected, onToggleSelect, onDelete, onNavigate }) => {
   const { t } = useLanguage();
   const [copied, setCopied] = useState(false);
 
@@ -47,10 +50,7 @@ export const FileCard: React.FC<FileCardProps> = ({ file, onDelete, onNavigate }
   const handleCardClick = (e: React.MouseEvent) => {
     if (isFolder) {
       e.preventDefault();
-      // Construct new path: current folder + folder name + /
-      // Ensure file.folder defaults to '/' if missing
       const parentPath = file.folder || '/';
-      // Ensure parentPath ends with '/'
       const normalizedParent = parentPath.endsWith('/') ? parentPath : parentPath + '/';
       const newPath = normalizedParent + file.name + '/';
       onNavigate(newPath);
@@ -71,8 +71,21 @@ export const FileCard: React.FC<FileCardProps> = ({ file, onDelete, onNavigate }
   return (
     <div 
       onClick={handleCardClick}
-      className={`group relative bg-white border border-gray-200 rounded-xl overflow-hidden hover:shadow-md transition-shadow duration-200 flex flex-col ${isFolder ? 'cursor-pointer hover:border-yellow-400' : ''}`}
+      className={`group relative bg-white border rounded-xl overflow-hidden transition-all duration-200 flex flex-col
+        ${isSelected ? 'border-indigo-500 ring-2 ring-indigo-500 ring-offset-2' : 'border-gray-200 hover:shadow-md'}
+        ${isFolder ? 'cursor-pointer hover:border-yellow-400' : ''}
+      `}
     >
+      {/* Selection Checkbox - Always visible if selected, else on group hover */}
+      <div 
+          className={`absolute top-2 left-2 z-10 ${isSelected ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'} transition-opacity`}
+          onClick={(e) => { e.stopPropagation(); onToggleSelect(file.id); }}
+      >
+          <div className={`p-1 rounded bg-white/90 backdrop-blur shadow-sm cursor-pointer ${isSelected ? 'text-indigo-600' : 'text-gray-400 hover:text-indigo-500'}`}>
+             {isSelected ? <CheckSquare className="w-5 h-5" /> : <Square className="w-5 h-5" />}
+          </div>
+      </div>
+
       {/* Preview Area */}
       <div className="h-32 w-full bg-gray-50 flex items-center justify-center border-b border-gray-100 relative overflow-hidden">
         {isImage ? (
@@ -85,47 +98,49 @@ export const FileCard: React.FC<FileCardProps> = ({ file, onDelete, onNavigate }
           getIcon()
         )}
         
-        {/* Overlay Actions */}
-        <div className="absolute inset-0 bg-black/0 group-hover:bg-black/40 transition-colors duration-200 flex items-center justify-center gap-3 opacity-0 group-hover:opacity-100">
-            {!isFolder && (
-              <>
+        {/* Overlay Actions - Hide if selecting to avoid clutter, or keep it? Hiding makes selection cleaner. */}
+        {!isSelected && (
+            <div className="absolute inset-0 bg-black/0 group-hover:bg-black/40 transition-colors duration-200 flex items-center justify-center gap-3 opacity-0 group-hover:opacity-100 pointer-events-none group-hover:pointer-events-auto">
+                {!isFolder && (
+                <>
+                    <button 
+                    onClick={handleCopyLink}
+                    className={`p-2.5 rounded-full transition-transform hover:scale-110 ${copied ? 'bg-green-50 text-green-600' : 'bg-white text-gray-700 hover:bg-gray-100'}`}
+                    title={t('copy_link')}
+                    >
+                    {copied ? <Check className="w-5 h-5" /> : <Copy className="w-5 h-5" />}
+                    </button>
+                    <a 
+                    href={file.url} 
+                    target="_blank" 
+                    rel="noreferrer"
+                    onClick={(e) => e.stopPropagation()}
+                    className="p-2.5 bg-white rounded-full hover:bg-gray-100 text-gray-700 transition-transform hover:scale-110"
+                    title={t('download')}
+                    >
+                    <Download className="w-5 h-5" />
+                    </a>
+                </>
+                )}
                 <button 
-                  onClick={handleCopyLink}
-                  className={`p-2.5 rounded-full transition-transform hover:scale-110 ${copied ? 'bg-green-50 text-green-600' : 'bg-white text-gray-700 hover:bg-gray-100'}`}
-                  title={t('copy_link')}
+                onClick={(e) => {
+                    e.stopPropagation();
+                    onDelete(file);
+                }}
+                className="p-2.5 bg-white rounded-full hover:bg-red-50 text-red-600 transition-transform hover:scale-110"
+                title={t('delete_btn')}
                 >
-                  {copied ? <Check className="w-5 h-5" /> : <Copy className="w-5 h-5" />}
+                <Trash2 className="w-5 h-5" />
                 </button>
-                <a 
-                  href={file.url} 
-                  target="_blank" 
-                  rel="noreferrer"
-                  onClick={(e) => e.stopPropagation()}
-                  className="p-2.5 bg-white rounded-full hover:bg-gray-100 text-gray-700 transition-transform hover:scale-110"
-                  title={t('download')}
-                >
-                  <Download className="w-5 h-5" />
-                </a>
-              </>
-            )}
-            <button 
-              onClick={(e) => {
-                e.stopPropagation();
-                onDelete(file);
-              }}
-              className="p-2.5 bg-white rounded-full hover:bg-red-50 text-red-600 transition-transform hover:scale-110"
-              title={t('delete_btn')}
-            >
-              <Trash2 className="w-5 h-5" />
-            </button>
-        </div>
+            </div>
+        )}
       </div>
 
       {/* Info Area */}
       <div className="p-4 flex flex-col flex-1 justify-between">
         <div>
           <div className="flex items-start justify-between gap-2">
-            <h4 className="font-medium text-gray-900 truncate text-sm mb-1" title={file.name}>
+            <h4 className={`font-medium truncate text-sm mb-1 ${isSelected ? 'text-indigo-700' : 'text-gray-900'}`} title={file.name}>
               {file.name}
             </h4>
           </div>

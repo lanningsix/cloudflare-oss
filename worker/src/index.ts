@@ -187,6 +187,118 @@ export default {
 			}
 		}
 
+        // --- POST /api/files/batch-delete ---
+        if (request.method === 'POST' && path === '/api/files/batch-delete') {
+            try {
+                const { fileIds } = await request.json() as { fileIds: string[] };
+                if (!fileIds || fileIds.length === 0) return new Response('No files specified', { status: 400, headers: corsHeaders });
+
+                // 1. Get info
+                const placeholders = fileIds.map(() => '?').join(',');
+                const { results } = await env.DB.prepare(`SELECT key, id, type, folder, name FROM files WHERE id IN (${placeholders}) AND owner_id = ?`)
+                    .bind(...fileIds, userId)
+                    .all();
+
+                if (!results || results.length === 0) return new Response(JSON.stringify({ success: true }), { headers: corsHeaders });
+
+                const filesOnly = results.filter((f: any) => f.type !== 'directory');
+                const foldersOnly = results.filter((f: any) => f.type === 'directory');
+
+                // 2. Delete Files
+                if (filesOnly.length > 0) {
+                    const keys = filesOnly.map((f:any) => f.key);
+                    const ids = filesOnly.map((f:any) => f.id);
+                    
+                    // R2 Batch Delete (chunks of 1000)
+                    for (let i = 0; i < keys.length; i += 1000) {
+                        await env.MY_BUCKET.delete(keys.slice(i, i + 1000));
+                    }
+                    // DB Delete
+                    const idPlaceholders = ids.map(() => '?').join(',');
+                    await env.DB.prepare(`DELETE FROM files WHERE id IN (${idPlaceholders})`).bind(...ids).run();
+                }
+
+                // 3. Delete Folders (Iterative due to complexity of finding children)
+                for (const folder of foldersOnly) {
+                    const folderPathForDb = (folder as any).folder === '/' ? `/${(folder as any).name}/` : `${(folder as any).folder}${(folder as any).name}/`;
+                    
+                    // Find all children keys
+                    const q = `SELECT key FROM files WHERE (folder = ? OR folder LIKE ?) AND owner_id = ?`;
+                    const ch = await env.DB.prepare(q).bind(folderPathForDb, folderPathForDb + '%', userId).all();
+                    
+                    const kDel = ch.results.map((r:any) => r.key as string);
+                    kDel.push((folder as any).key); // add folder marker
+                    
+                    if (kDel.length > 0) {
+                        for (let i = 0; i < kDel.length; i += 1000) await env.MY_BUCKET.delete(kDel.slice(i, i+1000));
+                    }
+                    
+                    await env.DB.prepare(`DELETE FROM files WHERE (folder = ? OR folder LIKE ? OR id = ?) AND owner_id = ?`)
+                        .bind(folderPathForDb, folderPathForDb + '%', (folder as any).id, userId).run();
+                }
+
+                return new Response(JSON.stringify({ success: true }), { headers: corsHeaders });
+
+            } catch (e) {
+                return new Response(JSON.stringify({ error: (e as Error).message }), { status: 500, headers: corsHeaders });
+            }
+        }
+
+        // --- POST /api/files/move ---
+        if (request.method === 'POST' && path === '/api/files/move') {
+             try {
+                const { fileIds, destination } = await request.json() as { fileIds: string[], destination: string };
+                // Note: Destination is a folder path, e.g. '/' or '/photos/'
+                if (!fileIds || !fileIds.length) return new Response(JSON.stringify({error: 'No files'}), { status: 400, headers: corsHeaders});
+
+                // Only supporting file moves for safety, folder moves are complex (recursive R2 copy/delete)
+                const placeholders = fileIds.map(() => '?').join(',');
+                const { results } = await env.DB.prepare(`SELECT * FROM files WHERE id IN (${placeholders}) AND owner_id = ?`)
+                    .bind(...fileIds, userId)
+                    .all();
+                
+                const movedFiles = [];
+
+                for (const file of results as any[]) {
+                    if (file.type === 'directory') continue; // Skip folders
+
+                    // Calculate new key
+                    const destPrefix = destination === '/' ? '' : destination.slice(1);
+                    const oldKey = file.key;
+                    // extract filename from old key (or just use DB name)
+                    // Using DB name is safer
+                    const newKey = destPrefix + file.name;
+                    
+                    if (oldKey === newKey) continue;
+
+                    // R2 Copy
+                    try {
+                        const object = await env.MY_BUCKET.get(oldKey);
+                        if (object) {
+                            await env.MY_BUCKET.put(newKey, object.body, {
+                                httpMetadata: object.httpMetadata
+                            });
+                            await env.MY_BUCKET.delete(oldKey);
+                        }
+                        
+                        // Update DB
+                        const newUrl = `https://static-oss.dundun.uno/${newKey}`; // Hardcoded per existing patterns
+                        await env.DB.prepare(`UPDATE files SET folder = ?, key = ?, url = ? WHERE id = ?`)
+                            .bind(destination, newKey, newUrl, file.id)
+                            .run();
+                        
+                        movedFiles.push(file.id);
+                    } catch (err) {
+                        console.error(`Failed to move ${file.name}`, err);
+                    }
+                }
+
+                return new Response(JSON.stringify({ success: true, moved: movedFiles }), { headers: corsHeaders });
+             } catch(e) {
+                 return new Response(JSON.stringify({ error: (e as Error).message }), { status: 500, headers: corsHeaders });
+             }
+        }
+
         // --- MULTIPART UPLOAD ROUTES (Start) ---
         
         // 1. Init Multipart Upload
