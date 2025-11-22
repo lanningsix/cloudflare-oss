@@ -282,6 +282,21 @@ export default {
              }
         }
 
+        // 4. Abort Multipart Upload (Cleanup)
+        if (request.method === 'POST' && path === '/api/upload/abort') {
+             try {
+                const { uploadId, key } = await request.json() as any;
+                if (uploadId && key) {
+                    const multipartUpload = env.MY_BUCKET.resumeMultipartUpload(key, uploadId);
+                    await multipartUpload.abort();
+                }
+                return new Response(JSON.stringify({ success: true }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' }});
+             } catch (e) {
+                 // Even if it fails (e.g. already done), return success to UI
+                 return new Response(JSON.stringify({ success: true, warning: (e as Error).message }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' }});
+             }
+        }
+
         // --- MULTIPART UPLOAD ROUTES (End) ---
 
 

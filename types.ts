@@ -15,7 +15,7 @@ export interface UploadProgress {
   id: string; // Unique ID for the upload task
   fileName: string;
   progress: number;
-  status: 'pending' | 'uploading' | 'complete' | 'error';
+  status: 'pending' | 'uploading' | 'paused' | 'complete' | 'error' | 'cancelled';
   error?: string;
 }
 

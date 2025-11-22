@@ -82,179 +82,381 @@ export const createFolder = async (name: string, parent: string): Promise<R2File
   }
 };
 
-export const uploadFile = async (
-  file: File, 
-  folder: string = '/', 
-  onProgress?: (percent: number) => void
-): Promise<R2File> => {
-  if (useMock) return mockUploadFile(file, folder, onProgress);
+// --- NEW UPLOAD LOGIC WITH CONTROLLERS ---
 
-  // Decide between simple upload and multipart upload
-  if (file.size <= CHUNK_SIZE) {
-    return uploadSmallFile(file, folder, onProgress);
-  } else {
-    return uploadLargeFile(file, folder, onProgress);
-  }
-};
-
-// --- Standard Upload for Small Files ---
-const uploadSmallFile = (
-  file: File, 
-  folder: string, 
-  onProgress?: (percent: number) => void
-): Promise<R2File> => {
-  return new Promise((resolve, reject) => {
-    const xhr = new XMLHttpRequest();
-    const formData = new FormData();
-    formData.append('file', file);
-    formData.append('folder', folder);
-
-    xhr.open('POST', `${API_BASE_URL}/upload`);
-
-    // Add Auth Headers
-    const headers = getAuthHeaders();
-    Object.entries(headers).forEach(([key, value]) => {
-      xhr.setRequestHeader(key, value);
-    });
-
-    // Progress event
-    if (xhr.upload && onProgress) {
-      xhr.upload.onprogress = (event) => {
-        if (event.lengthComputable) {
-          const percentComplete = (event.loaded / event.total) * 100;
-          onProgress(percentComplete);
-        }
-      };
-    }
-
-    xhr.onload = async () => {
-      if (xhr.status >= 200 && xhr.status < 300) {
-        try {
-          const data = JSON.parse(xhr.responseText) as { file: R2File };
-          resolve(data.file);
-        } catch (e) {
-          reject(new Error('Invalid JSON response'));
-        }
-      } else {
-        try {
-          const errorData = JSON.parse(xhr.responseText);
-          reject(new Error(errorData.error || `Upload failed: ${xhr.statusText}`));
-        } catch (e) {
-          reject(new Error(`Upload failed: ${xhr.statusText}`));
-        }
-      }
-    };
-
-    xhr.onerror = () => {
-      reject(new Error('Network error during upload'));
-    };
-
-    xhr.send(formData);
-  });
+export interface UploadController {
+  start: () => void;
+  pause: () => void;
+  resume: () => void;
+  cancel: () => void;
 }
 
-// --- Multipart Upload for Large Files ---
-const uploadLargeFile = async (
-  file: File,
-  folder: string,
-  onProgress?: (percent: number) => void
-): Promise<R2File> => {
-  try {
-    const headers = getAuthHeaders();
-    
-    // 1. Init Multipart Upload
-    const initRes = await fetch(`${API_BASE_URL}/upload/init`, {
-      method: 'POST',
-      headers: { ...headers, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name: file.name, folder, type: file.type })
-    });
+type StatusChangeCallback = (status: 'pending' | 'uploading' | 'paused' | 'complete' | 'error' | 'cancelled', error?: string) => void;
+type ProgressCallback = (percent: number) => void;
 
-    if (!initRes.ok) {
-        const err = await initRes.json().catch(() => ({})) as { error?: string };
-        throw new Error(err.error || 'Failed to initiate multipart upload');
-    }
+// Factory to create an upload task
+export const createUpload = (
+  file: File, 
+  folder: string = '/',
+  onStatusChange: StatusChangeCallback,
+  onProgress: ProgressCallback,
+  onComplete: (file: R2File) => void
+): UploadController => {
+  
+  if (useMock) {
+    // Mock implementation wrapper
+    let cancelled = false;
+    return {
+        start: async () => {
+             cancelled = false;
+             onStatusChange('uploading');
+             try {
+                const res = await mockUploadFile(file, folder, (p) => {
+                    if(!cancelled) onProgress(p);
+                });
+                if(!cancelled) {
+                    onComplete(res);
+                    onStatusChange('complete');
+                }
+             } catch(e) {
+                 if(!cancelled) onStatusChange('error', (e as Error).message);
+             }
+        },
+        pause: () => {}, // Mock pause not implemented fully
+        resume: () => {},
+        cancel: () => { cancelled = true; onStatusChange('cancelled'); }
+    };
+  }
 
-    const { uploadId, key } = await initRes.json() as { uploadId: string, key: string };
-    
-    // 2. Upload Parts
-    const totalParts = Math.ceil(file.size / CHUNK_SIZE);
-    const parts: { partNumber: number, etag: string }[] = [];
-    let uploadedBytes = 0;
-
-    for (let i = 0; i < totalParts; i++) {
-      const start = i * CHUNK_SIZE;
-      const end = Math.min(start + CHUNK_SIZE, file.size);
-      const chunk = file.slice(start, end);
-      const partNumber = i + 1;
-
-      // Upload Chunk
-      const etag = await uploadChunk(chunk, uploadId, key, partNumber);
-      parts.push({ partNumber, etag });
-      
-      // Update progress
-      uploadedBytes += chunk.size;
-      if (onProgress) {
-        const percent = (uploadedBytes / file.size) * 100;
-        onProgress(percent);
-      }
-    }
-
-    // 3. Complete Upload
-    const completeRes = await fetch(`${API_BASE_URL}/upload/complete`, {
-      method: 'POST',
-      headers: { ...headers, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ 
-        uploadId, 
-        key, 
-        parts, 
-        name: file.name, 
-        folder, 
-        size: file.size, 
-        type: file.type 
-      })
-    });
-
-    if (!completeRes.ok) {
-       const err = await completeRes.json().catch(() => ({})) as { error?: string };
-       throw new Error(err.error || 'Failed to complete upload');
-    }
-
-    const { file: newFile } = await completeRes.json() as { file: R2File };
-    return newFile;
-
-  } catch (error) {
-    console.error("Multipart Upload Error:", error);
-    throw error;
+  // Real implementation
+  if (file.size <= CHUNK_SIZE) {
+      return new SmallFileUpload(file, folder, onStatusChange, onProgress, onComplete);
+  } else {
+      return new LargeFileUpload(file, folder, onStatusChange, onProgress, onComplete);
   }
 };
 
-const uploadChunk = (chunk: Blob, uploadId: string, key: string, partNumber: number): Promise<string> => {
-  return new Promise((resolve, reject) => {
-    const xhr = new XMLHttpRequest();
-    const url = `${API_BASE_URL}/upload/part?uploadId=${uploadId}&key=${encodeURIComponent(key)}&partNumber=${partNumber}`;
-    xhr.open('PUT', url);
-    
-    const headers = getAuthHeaders();
-    Object.entries(headers).forEach(([k, v]) => xhr.setRequestHeader(k, v));
-    
-    xhr.onload = () => {
-      if (xhr.status === 200) {
-        try {
-           const res = JSON.parse(xhr.responseText);
-           resolve(res.etag);
-        } catch(e) {
-           reject(new Error("Invalid chunk response"));
+// Class for Small File Uploads (Atomic XHR)
+class SmallFileUpload implements UploadController {
+    private xhr: XMLHttpRequest | null = null;
+    private isCancelled = false;
+
+    constructor(
+        private file: File,
+        private folder: string,
+        private onStatusChange: StatusChangeCallback,
+        private onProgress: ProgressCallback,
+        private onComplete: (file: R2File) => void
+    ) {}
+
+    start() {
+        // Allow restarting if it was previously cancelled
+        this.isCancelled = false;
+        
+        this.onStatusChange('uploading');
+        
+        this.xhr = new XMLHttpRequest();
+        const formData = new FormData();
+        formData.append('file', this.file);
+        formData.append('folder', this.folder);
+
+        this.xhr.open('POST', `${API_BASE_URL}/upload`);
+        const headers = getAuthHeaders();
+        Object.entries(headers).forEach(([key, value]) => {
+            this.xhr?.setRequestHeader(key, value);
+        });
+
+        if (this.xhr.upload) {
+            this.xhr.upload.onprogress = (event) => {
+                if (event.lengthComputable) {
+                    const percent = (event.loaded / event.total) * 100;
+                    this.onProgress(percent);
+                }
+            };
         }
-      } else {
-        reject(new Error(`Chunk ${partNumber} failed: ${xhr.statusText}`));
-      }
-    };
+
+        this.xhr.onload = () => {
+            if (this.isCancelled) return;
+            if (this.xhr && this.xhr.status >= 200 && this.xhr.status < 300) {
+                try {
+                    const data = JSON.parse(this.xhr.responseText) as { file: R2File };
+                    this.onComplete(data.file);
+                    this.onStatusChange('complete');
+                } catch (e) {
+                    this.onStatusChange('error', 'Invalid JSON response');
+                }
+            } else {
+                try {
+                    const errorData = JSON.parse(this.xhr?.responseText || '{}');
+                    this.onStatusChange('error', errorData.error || `Upload failed`);
+                } catch (e) {
+                    this.onStatusChange('error', `Upload failed`);
+                }
+            }
+        };
+
+        this.xhr.onerror = () => {
+            if (!this.isCancelled) this.onStatusChange('error', 'Network error');
+        };
+
+        this.xhr.send(formData);
+    }
+
+    pause() {
+        // Small files cannot be effectively paused in one request. 
+        // Treat as cancel or ignore. For better UX, we'll just ignore or show a toast.
+        // Or implement abort and expect user to click "Retry" (which calls start)
+        this.cancel();
+    }
+
+    resume() {
+        this.isCancelled = false;
+        this.start();
+    }
+
+    cancel() {
+        this.isCancelled = true;
+        if (this.xhr) {
+            this.xhr.abort();
+            this.xhr = null;
+        }
+        this.onStatusChange('cancelled');
+    }
+}
+
+// Class for Large File Uploads (Multipart, Resumable)
+class LargeFileUpload implements UploadController {
+    private uploadId: string | null = null;
+    private key: string | null = null;
+    private parts: { partNumber: number, etag: string }[] = [];
+    private uploadedBytes = 0;
+    private currentChunkIndex = 0;
+    private totalChunks = 0;
     
-    xhr.onerror = () => reject(new Error(`Network error on chunk ${partNumber}`));
+    private currentXhr: XMLHttpRequest | null = null;
     
-    xhr.send(chunk);
-  });
-};
+    // States
+    private isPaused = false;
+    private isCancelled = false;
+    private isRunning = false;
+
+    constructor(
+        private file: File,
+        private folder: string,
+        private onStatusChange: StatusChangeCallback,
+        private onProgress: ProgressCallback,
+        private onComplete: (file: R2File) => void
+    ) {
+        this.totalChunks = Math.ceil(file.size / CHUNK_SIZE);
+    }
+
+    start() {
+        // If previously cancelled, we must reset state to allow a fresh upload
+        if (this.isCancelled) {
+            this.resetState();
+        }
+
+        if(this.isRunning) return;
+        this.isPaused = false;
+        this.isCancelled = false;
+        this.runUploadLoop();
+    }
+
+    resume() {
+        if (!this.isPaused && this.isRunning) return; // Already running
+        
+        // If coming back from cancel, we should probably use start(), but if resume is called:
+        if (this.isCancelled) {
+            this.start();
+            return;
+        }
+
+        // If it was error or paused, we restart loop
+        this.isPaused = false;
+        this.isCancelled = false;
+        this.runUploadLoop();
+    }
+
+    pause() {
+        this.isPaused = true;
+        this.isRunning = false;
+        // Abort current chunk to stop network usage immediately
+        if (this.currentXhr) {
+            this.currentXhr.abort();
+            this.currentXhr = null;
+        }
+        this.onStatusChange('paused');
+    }
+
+    cancel() {
+        this.isCancelled = true;
+        this.isRunning = false;
+        this.isPaused = false;
+        if (this.currentXhr) {
+            this.currentXhr.abort();
+            this.currentXhr = null;
+        }
+        
+        // Try to clean up on server
+        if (this.uploadId && this.key) {
+            const payload = { uploadId: this.uploadId, key: this.key };
+            fetch(`${API_BASE_URL}/upload/abort`, {
+                method: 'POST',
+                headers: { ...getAuthHeaders(), 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload)
+            }).catch(console.error);
+        }
+
+        this.onStatusChange('cancelled');
+    }
+
+    private resetState() {
+        this.uploadId = null;
+        this.key = null;
+        this.parts = [];
+        this.uploadedBytes = 0;
+        this.currentChunkIndex = 0;
+    }
+
+    private async runUploadLoop() {
+        this.isRunning = true;
+        this.onStatusChange('uploading');
+
+        try {
+            // 1. Init (if not done)
+            if (!this.uploadId) {
+                await this.initMultipart();
+            }
+
+            // 2. Loop Chunks
+            while (this.currentChunkIndex < this.totalChunks) {
+                if (this.isCancelled) {
+                     this.isRunning = false; 
+                     return; 
+                }
+                
+                if (this.isPaused) {
+                    this.isRunning = false;
+                    this.onStatusChange('paused');
+                    return;
+                }
+
+                // Prepare chunk
+                const start = this.currentChunkIndex * CHUNK_SIZE;
+                const end = Math.min(start + CHUNK_SIZE, this.file.size);
+                const chunk = this.file.slice(start, end);
+                const partNumber = this.currentChunkIndex + 1;
+
+                try {
+                    const etag = await this.uploadChunk(chunk, partNumber);
+                    this.parts.push({ partNumber, etag });
+                    this.uploadedBytes += chunk.size;
+                    this.currentChunkIndex++;
+                    
+                    // Report progress
+                    const percent = (this.uploadedBytes / this.file.size) * 100;
+                    this.onProgress(percent);
+                } catch (err) {
+                    // If aborted due to pause, loop checks `isPaused` next iteration or catches the abort error
+                    if (this.isPaused || this.isCancelled) return;
+                    
+                    // Real error
+                    console.error(err);
+                    this.isRunning = false;
+                    this.onStatusChange('error', 'Upload chunk failed. Click Retry.');
+                    return;
+                }
+            }
+
+            // 3. Complete
+            await this.completeMultipart();
+            this.isRunning = false;
+
+        } catch (err) {
+            if (!this.isPaused && !this.isCancelled) {
+                 this.isRunning = false;
+                 this.onStatusChange('error', (err as Error).message || 'Upload failed');
+            }
+        }
+    }
+
+    private async initMultipart() {
+        const headers = getAuthHeaders();
+        const res = await fetch(`${API_BASE_URL}/upload/init`, {
+            method: 'POST',
+            headers: { ...headers, 'Content-Type': 'application/json' },
+            body: JSON.stringify({ name: this.file.name, folder: this.folder, type: this.file.type })
+        });
+
+        if (!res.ok) {
+            const err = await res.json().catch(() => ({})) as { error?: string };
+            throw new Error(err.error || 'Failed to initiate upload');
+        }
+
+        const data = await res.json() as { uploadId: string, key: string };
+        this.uploadId = data.uploadId;
+        this.key = data.key;
+    }
+
+    private uploadChunk(chunk: Blob, partNumber: number): Promise<string> {
+        return new Promise((resolve, reject) => {
+            if (!this.uploadId || !this.key) return reject("No upload ID");
+            
+            const xhr = new XMLHttpRequest();
+            this.currentXhr = xhr;
+            
+            const url = `${API_BASE_URL}/upload/part?uploadId=${this.uploadId}&key=${encodeURIComponent(this.key)}&partNumber=${partNumber}`;
+            xhr.open('PUT', url);
+            
+            const headers = getAuthHeaders();
+            Object.entries(headers).forEach(([k, v]) => xhr.setRequestHeader(k, v));
+
+            xhr.onload = () => {
+                if (xhr.status === 200) {
+                    try {
+                        const res = JSON.parse(xhr.responseText);
+                        resolve(res.etag);
+                    } catch(e) {
+                        reject(new Error("Invalid chunk response"));
+                    }
+                } else {
+                    reject(new Error(`Chunk ${partNumber} failed`));
+                }
+            };
+
+            xhr.onerror = () => reject(new Error("Network error"));
+            xhr.onabort = () => reject(new Error("Aborted"));
+
+            xhr.send(chunk);
+        });
+    }
+
+    private async completeMultipart() {
+        const headers = getAuthHeaders();
+        const res = await fetch(`${API_BASE_URL}/upload/complete`, {
+            method: 'POST',
+            headers: { ...headers, 'Content-Type': 'application/json' },
+            body: JSON.stringify({ 
+                uploadId: this.uploadId, 
+                key: this.key, 
+                parts: this.parts, 
+                name: this.file.name, 
+                folder: this.folder, 
+                size: this.file.size, 
+                type: this.file.type 
+            })
+        });
+
+        if (!res.ok) {
+            const err = await res.json().catch(() => ({})) as { error?: string };
+            throw new Error(err.error || 'Failed to complete upload');
+        }
+
+        const data = await res.json() as { file: R2File };
+        this.onComplete(data.file);
+        this.onStatusChange('complete');
+    }
+}
 
 export const deleteFile = async (id: string, key: string): Promise<void> => {
   if (useMock) return mockDeleteFile(id);

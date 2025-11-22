@@ -71,6 +71,12 @@ const translations = {
     username_taken: "Username is already taken",
     switch_to_register: "Need an account? Register",
     switch_to_login: "Already have an account? Login",
+    // Controls
+    resume_upload: "Resume",
+    pause_upload: "Pause",
+    cancel_upload: "Cancel",
+    retry_upload: "Retry",
+    upload_paused: "Paused"
   },
   zh: {
     app_title: "WorkerBox",
@@ -139,6 +145,12 @@ const translations = {
     username_taken: "用户名已被使用",
     switch_to_register: "还没有账户？立即注册",
     switch_to_login: "已有账户？立即登录",
+    // Controls
+    resume_upload: "继续上传",
+    pause_upload: "暂停",
+    cancel_upload: "取消",
+    retry_upload: "重试",
+    upload_paused: "已暂停"
   },
   ja: {
     app_title: "WorkerBox",
@@ -207,6 +219,12 @@ const translations = {
     username_taken: "ユーザー名は既に使用されています",
     switch_to_register: "アカウントをお持ちでないですか？登録",
     switch_to_login: "既にアカウントをお持ちですか？ログイン",
+    // Controls
+    resume_upload: "再開",
+    pause_upload: "一時停止",
+    cancel_upload: "キャンセル",
+    retry_upload: "再試行",
+    upload_paused: "一時停止中"
   }
 };
 

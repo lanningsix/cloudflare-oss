@@ -1,16 +1,26 @@
 
-import React, { useEffect, useState, useCallback } from 'react';
-import { UploadArea } from './components/UploadArea';
-import { FileCard } from './components/FileCard';
-import { listFiles, uploadFile, deleteFile, enableMockMode, isMockMode, createFolder } from './services/fileService';
+import React, { useEffect, useState, useCallback, useRef } from 'react';
+import { listFiles, createUpload, deleteFile, enableMockMode, isMockMode, createFolder, UploadController } from './services/fileService';
 import { R2File, UploadProgress, FileWithPath } from './types';
-import { Cloud, Database, HardDrive, RefreshCw, AlertCircle, CheckCircle2, X, ZapOff, FolderPlus, Home, ChevronRight, FolderOpen, Trash2, Languages, UserCircle, LogOut, LogIn, UserPlus, Lock, Minimize2, Maximize2, File as FileIcon, Loader2 } from 'lucide-react';
+import { AlertCircle } from 'lucide-react';
 import { useLanguage } from './contexts/LanguageContext';
 import { useAuth } from './contexts/AuthContext';
 
+// Components
+import { UploadArea } from './components/UploadArea';
+import { Header } from './components/Header';
+import { Breadcrumbs } from './components/Breadcrumbs';
+import { FileList } from './components/FileList';
+import { GuestInfo } from './components/GuestInfo';
+import { UploadQueuePanel } from './components/UploadQueuePanel';
+import { Toast } from './components/Toast';
+import { AuthModal } from './components/modals/AuthModal';
+import { CreateFolderModal } from './components/modals/CreateFolderModal';
+import { DeleteConfirmModal } from './components/modals/DeleteConfirmModal';
+
 export default function App() {
-  const { t, language, setLanguage } = useLanguage();
-  const { user, login, register, logout } = useAuth();
+  const { t } = useLanguage();
+  const { user, login, register } = useAuth();
   const [files, setFiles] = useState<R2File[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -20,27 +30,20 @@ export default function App() {
   // Upload State
   const [uploadQueue, setUploadQueue] = useState<UploadProgress[]>([]);
   const [isUploadPanelOpen, setIsUploadPanelOpen] = useState(true);
+  const uploadControllers = useRef<Map<string, UploadController>>(new Map());
   
   // Modal States
   const [isFolderModalOpen, setIsFolderModalOpen] = useState(false);
   const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
   const [authMode, setAuthMode] = useState<'login' | 'register'>('login');
   
-  const [newFolderName, setNewFolderName] = useState('');
-  const [authUsername, setAuthUsername] = useState('');
-  const [authPassword, setAuthPassword] = useState('');
-  const [authConfirmPassword, setAuthConfirmPassword] = useState('');
-  const [authLoading, setAuthLoading] = useState(false);
-  
   const [fileToDelete, setFileToDelete] = useState<R2File | null>(null);
-  
-  // Simple toast state
   const [toast, setToast] = useState<{msg: string, type: 'success' | 'error'} | null>(null);
 
+  // --- Data Fetching ---
+
   const fetchFiles = useCallback(async () => {
-    // If user is not initialized yet (context loading), skip
     if (!user) return;
-    
     setLoading(true);
     try {
       const data = await listFiles();
@@ -53,14 +56,10 @@ export default function App() {
     }
   }, [t, user]);
 
-  // Re-fetch when user changes (login/logout)
   useEffect(() => {
-    if (user) {
-      fetchFiles();
-    }
+    if (user) fetchFiles();
   }, [user, fetchFiles]);
 
-  // Auto-hide toast
   useEffect(() => {
     if (toast) {
       const timer = setTimeout(() => setToast(null), 3000);
@@ -68,56 +67,40 @@ export default function App() {
     }
   }, [toast]);
 
-  // Filter files based on current path
+  // --- Computed ---
+
   const currentFiles = files.filter(f => {
-    // Normalize default folders to '/'
     const fileFolder = f.folder || '/';
     return fileFolder === currentPath;
   });
 
-  // Calculate usage for guest
   const guestUsageCount = files.filter(f => f.type !== 'directory').length;
   const isGuestLimitReached = user?.isGuest && guestUsageCount >= 10;
 
+  // --- Handlers ---
+
   const handleUpload = async (filesToUpload: FileWithPath[]) => {
     if (filesToUpload.length === 0) return;
-    
-    // Frontend check for guest limit
     if (isGuestLimitReached) {
       setToast({ msg: t('upload_limit_reached'), type: 'error' });
       return;
     }
 
-    // Add to queue
-    const newUploads: UploadProgress[] = filesToUpload.map(f => ({
-      id: crypto.randomUUID(),
-      fileName: f.path || f.name,
-      progress: 0,
-      status: 'pending'
-    }));
-
-    setUploadQueue(prev => [...newUploads, ...prev]);
     setIsUploadPanelOpen(true);
+    const uploadBaseFolder = currentPath;
 
-    // Process uploads sequentially or parallel (lets do semi-parallel max 3)
-    // For simplicity in this version, we loop but don't await inside the main loop to allow UI updates,
-    // but we trigger the async operations.
-    
-    const uploadBaseFolder = currentPath; // Capture current path when upload starts
-
-    for (let i = 0; i < filesToUpload.length; i++) {
-       const file = filesToUpload[i];
-       const queueId = newUploads[i].id;
-
-       // Determine target folder
-       // If file has a relative path (from recursive folder drop), we need to append it to currentPath
-       // Example: currentPath = "/docs/", file.path = "subfolder/image.png"
-       // file.name = "image.png"
-       // targetFolder should be "/docs/subfolder/"
+    filesToUpload.forEach(file => {
+       const queueId = crypto.randomUUID();
        
+       setUploadQueue(prev => [...prev, {
+          id: queueId,
+          fileName: file.name,
+          progress: 0,
+          status: 'pending'
+       }]);
+
        let targetFolder = uploadBaseFolder;
        if (file.path) {
-           // Extract folder part from relative path
            const lastSlash = file.path.lastIndexOf('/');
            if (lastSlash !== -1) {
                const relativeFolder = file.path.substring(0, lastSlash);
@@ -125,53 +108,37 @@ export default function App() {
            }
        }
 
-       setUploadQueue(prev => prev.map(u => u.id === queueId ? { ...u, status: 'uploading' } : u));
+       const controller = createUpload(
+           file, 
+           targetFolder,
+           (status, err) => {
+               setUploadQueue(prev => prev.map(u => u.id === queueId ? { ...u, status, error: err } : u));
+               if (status === 'complete') fetchFiles();
+           },
+           (percent) => {
+               setUploadQueue(prev => prev.map(u => u.id === queueId ? { ...u, progress: percent } : u));
+           },
+           () => {} // On complete data
+       );
 
-       try {
-          await uploadFile(file, targetFolder, (percent) => {
-             setUploadQueue(prev => prev.map(u => u.id === queueId ? { ...u, progress: percent } : u));
-          });
-          setUploadQueue(prev => prev.map(u => u.id === queueId ? { ...u, status: 'complete', progress: 100 } : u));
-       } catch (err) {
-          console.error(err);
-          let errMsg = "Failed";
-          if (err instanceof Error && err.message.includes("limit")) {
-             errMsg = "Limit Reached";
-          }
-          setUploadQueue(prev => prev.map(u => u.id === queueId ? { ...u, status: 'error', error: errMsg } : u));
-       }
-    }
-
-    // Clean up successful uploads from queue after 3 seconds (optional, maybe just keep them)
-    // fetchFiles to show new files
-    fetchFiles();
+       uploadControllers.current.set(queueId, controller);
+       controller.start();
+    });
   };
 
-  const handleOpenCreateFolder = () => {
-    setNewFolderName('');
-    setIsFolderModalOpen(true);
-  };
-
-  const handleSubmitCreateFolder = async (e: React.FormEvent) => {
-    e.preventDefault();
-    const name = newFolderName.trim();
-    
-    if (!name) return;
-    
-    // Basic validation: no slashes
-    if (name.includes('/')) {
+  const createFolderHandler = async (name: string) => {
+    const cleanName = name.trim();
+    if (cleanName.includes('/')) {
       setToast({ msg: t('toast_invalid_name'), type: 'error' });
       return;
     }
-
-    // Check for duplicate in current view
-    if (currentFiles.some(f => f.type === 'directory' && f.name === name)) {
+    if (currentFiles.some(f => f.type === 'directory' && f.name === cleanName)) {
       setToast({ msg: t('toast_folder_exists'), type: 'error' });
       return;
     }
 
     try {
-      await createFolder(name, currentPath);
+      await createFolder(cleanName, currentPath);
       setToast({ msg: t('toast_folder_created'), type: 'success' });
       setIsFolderModalOpen(false);
       fetchFiles();
@@ -180,53 +147,20 @@ export default function App() {
     }
   };
 
-  const handleAuthSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setAuthLoading(true);
-    
-    try {
-      if (authMode === 'login') {
-        await login(authUsername, authPassword);
+  const authHandler = async (username: string, password: string, mode: 'login' | 'register') => {
+      if (mode === 'login') {
+        await login(username, password);
       } else {
-        if (authPassword !== authConfirmPassword) {
-           throw new Error(t('password_mismatch'));
-        }
-        await register(authUsername, authPassword);
+        await register(username, password);
         setToast({ msg: t('register_success'), type: 'success' });
       }
-      
       setIsAuthModalOpen(false);
-      setAuthUsername('');
-      setAuthPassword('');
-      setAuthConfirmPassword('');
-    } catch (err) {
-      const msg = authMode === 'login' 
-        ? t('login_failed', { error: (err as Error).message }) 
-        : t('register_failed', { error: (err as Error).message });
-      setToast({ msg, type: 'error' });
-    } finally {
-      setAuthLoading(false);
-    }
   };
 
-  const openAuthModal = (mode: 'login' | 'register' = 'login') => {
-    setAuthMode(mode);
-    setAuthUsername('');
-    setAuthPassword('');
-    setAuthConfirmPassword('');
-    setIsAuthModalOpen(true);
-  };
-
-  const onRequestDelete = (file: R2File) => {
-    setFileToDelete(file);
-  };
-
-  const handleConfirmDelete = async () => {
+  const deleteHandler = async () => {
     if (!fileToDelete) return;
-    
     const { id, key } = fileToDelete;
 
-    // Optimistic Update
     const previousFiles = [...files];
     setFiles(files.filter(f => f.id !== id));
     setFileToDelete(null);
@@ -240,206 +174,28 @@ export default function App() {
     }
   };
 
-  const switchToDemoMode = () => {
-    enableMockMode();
-    setIsDemo(true);
-    setError(null);
-    fetchFiles();
-    setToast({ msg: t('toast_demo_mode'), type: 'success' });
-  };
-
-  const navigateTo = (path: string) => {
-    setCurrentPath(path);
-  };
-
-  // Clear completed uploads
-  const clearCompletedUploads = () => {
-    setUploadQueue(prev => prev.filter(u => u.status !== 'complete'));
-  };
-
-  // Generate breadcrumbs
-  const breadcrumbs = React.useMemo(() => {
-    const parts = currentPath.split('/').filter(Boolean);
-    const crumbs = [{ name: t('home'), path: '/' }];
-    let buildPath = '/';
-    parts.forEach(part => {
-      buildPath += `${part}/`;
-      crumbs.push({ name: part, path: buildPath });
-    });
-    return crumbs;
-  }, [currentPath, t]);
-
-  // Calculate upload stats
-  const activeUploads = uploadQueue.filter(u => u.status === 'uploading' || u.status === 'pending').length;
-  const progressSum = uploadQueue.reduce((acc, curr) => acc + curr.progress, 0);
-  const totalProgress = uploadQueue.length > 0 ? progressSum / uploadQueue.length : 0;
+  // --- Render ---
 
   return (
     <div className="min-h-screen bg-gray-50 flex flex-col font-sans text-slate-800">
-      {/* Toast Notification - Top Center */}
-      {toast && (
-        <div className={`
-          fixed top-6 left-1/2 -translate-x-1/2 px-6 py-3 rounded-lg shadow-xl flex items-center justify-between gap-4 transition-all duration-300 z-[100] min-w-[320px] max-w-[90vw]
-          ${toast.type === 'success' ? 'bg-emerald-600 text-white' : 'bg-red-600 text-white'}
-        `}>
-          <div className="flex items-center gap-3">
-            {toast.type === 'success' ? <CheckCircle2 className="w-5 h-5 flex-shrink-0" /> : <AlertCircle className="w-5 h-5 flex-shrink-0" />}
-            <span className="font-medium text-sm sm:text-base">{toast.msg}</span>
-          </div>
-          <button onClick={() => setToast(null)} className="hover:bg-white/20 p-1 rounded-full transition-colors flex-shrink-0">
-            <X className="w-4 h-4" />
-          </button>
-        </div>
-      )}
+      {toast && <Toast msg={toast.msg} type={toast.type} onClose={() => setToast(null)} />}
 
-      {/* Header */}
-      <header className="bg-white border-b border-gray-200 sticky top-0 z-20">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 min-h-[64px] py-3 flex flex-wrap items-center justify-between gap-4">
-          <div className="flex items-center gap-3">
-            <div className={`p-1.5 rounded-lg text-white ${isDemo ? 'bg-indigo-500' : 'bg-[#F38020]'}`}>
-              {isDemo ? <ZapOff className="w-6 h-6" /> : <Cloud className="w-6 h-6" />}
-            </div>
-            <div className="flex flex-col leading-none">
-              <h1 className="text-xl font-bold tracking-tight text-gray-900">{t('app_title')}</h1>
-              <span className="text-[10px] text-gray-500 font-semibold tracking-wide uppercase mt-1 flex gap-1 items-center">
-                {isDemo ? (
-                  <span className="text-indigo-600">{t('subtitle_demo')}</span>
-                ) : (
-                  <>
-                    <Database className="w-3 h-3" /> D1 + <HardDrive className="w-3 h-3" /> R2
-                  </>
-                )}
-              </span>
-            </div>
-          </div>
-          
-          <div className="flex items-center gap-2">
-            {/* User Profile / Login */}
-            <div className="mr-2 flex items-center">
-              {user?.isGuest ? (
-                <button 
-                  onClick={() => openAuthModal('login')}
-                  className="flex items-center gap-2 px-3 py-2 text-sm font-medium text-indigo-600 hover:bg-indigo-50 rounded-lg transition-colors"
-                >
-                  <LogIn className="w-5 h-5" />
-                  <span className="hidden sm:inline">{t('login')}</span>
-                </button>
-              ) : (
-                 <div className="flex items-center gap-3">
-                    <div className="flex flex-col items-end">
-                        <span className="text-sm font-semibold text-gray-700">{user?.name}</span>
-                        <span className="text-xs text-green-600 font-medium px-1.5 py-0.5 bg-green-50 rounded-full">User</span>
-                    </div>
-                    <button 
-                      onClick={logout} 
-                      className="p-2 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-full transition-colors"
-                      title={t('logout')}
-                    >
-                      <LogOut className="w-5 h-5" />
-                    </button>
-                 </div>
-              )}
-            </div>
+      <Header 
+        isDemo={isDemo} 
+        loading={loading} 
+        onCreateFolder={() => setIsFolderModalOpen(true)}
+        onRefresh={fetchFiles}
+        onOpenAuth={(mode) => { setAuthMode(mode); setIsAuthModalOpen(true); }}
+      />
 
-            <div className="h-6 w-px bg-gray-200 mx-1"></div>
-
-             <button 
-              onClick={handleOpenCreateFolder}
-              className="flex items-center gap-2 px-3 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors"
-              title={t('new_folder')}
-            >
-              <FolderPlus className="w-5 h-5 text-gray-500" />
-              <span className="hidden sm:inline">{t('new_folder')}</span>
-            </button>
-            <button 
-              onClick={fetchFiles}
-              disabled={loading}
-              className="p-2 text-gray-500 hover:text-[#F38020] hover:bg-orange-50 rounded-full transition-colors disabled:opacity-50"
-              title={t('refresh')}
-            >
-              <RefreshCw className={`w-5 h-5 ${loading ? 'animate-spin' : ''}`} />
-            </button>
-
-            {/* Language Switcher */}
-            <div className="relative group ml-2">
-              <button className="p-2 text-gray-500 hover:text-[#F38020] hover:bg-orange-50 rounded-full transition-colors">
-                <Languages className="w-5 h-5" />
-              </button>
-              <div className="absolute right-0 mt-2 w-32 bg-white rounded-lg shadow-lg border border-gray-100 py-1 hidden group-hover:block hover:block z-50">
-                 <button 
-                   onClick={() => setLanguage('en')} 
-                   className={`w-full text-left px-4 py-2 text-sm hover:bg-gray-50 ${language === 'en' ? 'font-bold text-[#F38020]' : 'text-gray-700'}`}
-                 >
-                   English
-                 </button>
-                 <button 
-                   onClick={() => setLanguage('zh')} 
-                   className={`w-full text-left px-4 py-2 text-sm hover:bg-gray-50 ${language === 'zh' ? 'font-bold text-[#F38020]' : 'text-gray-700'}`}
-                 >
-                   中文
-                 </button>
-                 <button 
-                   onClick={() => setLanguage('ja')} 
-                   className={`w-full text-left px-4 py-2 text-sm hover:bg-gray-50 ${language === 'ja' ? 'font-bold text-[#F38020]' : 'text-gray-700'}`}
-                 >
-                   日本語
-                 </button>
-              </div>
-            </div>
-          </div>
-        </div>
-      </header>
-
-      {/* Main Content */}
-      <main className="flex-1 max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 w-full mb-20">
+      <main className="flex-1 max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 w-full mb-24 sm:mb-20">
         
-        {/* Info Bar for Guest */}
-        {user?.isGuest && (
-          <div className="mb-6 bg-blue-50 border border-blue-100 rounded-lg p-3 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
-             <div className="flex items-center gap-2 text-blue-800">
-                <UserCircle className="w-5 h-5" />
-                <span className="font-medium text-sm">{t('guest_mode')}</span>
-                <span className="text-sm text-blue-600">
-                   • {t('guest_limit_info', { count: guestUsageCount })}
-                </span>
-             </div>
-             {isGuestLimitReached && (
-                 <span className="text-xs font-bold text-red-600 bg-white px-2 py-1 rounded border border-red-100">
-                    {t('upload_limit_reached')}
-                 </span>
-             )}
-             <button 
-               onClick={() => openAuthModal('login')}
-               className="text-xs font-medium text-indigo-600 hover:text-indigo-800 hover:underline whitespace-nowrap"
-             >
-               {t('login_to_unlimit')}
-             </button>
-          </div>
-        )}
+        <GuestInfo files={files} onLogin={() => { setAuthMode('login'); setIsAuthModalOpen(true); }} />
 
-        {/* Breadcrumbs */}
-        <nav className="flex items-center text-sm text-gray-500 mb-6 overflow-x-auto whitespace-nowrap pb-2 no-scrollbar">
-          {breadcrumbs.map((crumb, index) => (
-            <div key={crumb.path} className="flex items-center">
-              {index > 0 && <ChevronRight className="w-4 h-4 mx-1 flex-shrink-0 text-gray-400" />}
-              <button
-                onClick={() => navigateTo(crumb.path)}
-                className={`flex items-center gap-1 px-2 py-1 rounded-md transition-colors ${
-                  index === breadcrumbs.length - 1 
-                    ? 'font-semibold text-gray-900 bg-gray-200 pointer-events-none' 
-                    : 'hover:bg-gray-200 text-gray-600'
-                }`}
-              >
-                {index === 0 && <Home className="w-4 h-4" />}
-                {crumb.name}
-              </button>
-            </div>
-          ))}
-        </nav>
+        <Breadcrumbs currentPath={currentPath} onNavigate={setCurrentPath} />
 
-        {/* Upload Section */}
         <section className="mb-8 max-w-2xl mx-auto relative">
-          <UploadArea onUpload={handleUpload} isUploading={activeUploads > 0} />
+          <UploadArea onUpload={handleUpload} isUploading={false} /> 
           {isGuestLimitReached && (
               <div className="absolute inset-0 bg-white/60 backdrop-blur-[1px] flex items-center justify-center rounded-xl border-2 border-gray-200 z-10">
                   <div className="text-center p-4">
@@ -451,323 +207,61 @@ export default function App() {
           )}
         </section>
 
-        {/* File List Section */}
-        <section>
-          <div className="flex items-center justify-between mb-4">
-            <h2 className="text-lg font-semibold text-gray-900 flex items-center gap-2">
-              {currentPath === '/' ? t('all_files') : currentPath.split('/').slice(-2, -1)[0]}
-              <span className="text-sm font-normal text-gray-400 bg-gray-100 px-2 py-0.5 rounded-full">
-                {currentFiles.length}
-              </span>
-            </h2>
-          </div>
-
-          {error && (
-            <div className="mb-6 p-4 rounded-lg bg-red-50 border border-red-200 text-red-700 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
-              <div className="flex items-center gap-3">
-                <AlertCircle className="w-5 h-5 flex-shrink-0" />
-                <div>
-                  <p className="text-sm font-bold">{t('connection_error')}</p>
-                  <p className="text-sm">{error}</p>
-                </div>
-              </div>
-              <button 
-                onClick={switchToDemoMode}
-                className="whitespace-nowrap px-4 py-2 bg-red-100 hover:bg-red-200 text-red-800 rounded-md text-sm font-medium transition-colors"
-              >
-                {t('switch_demo')}
-              </button>
-            </div>
-          )}
-
-          {loading && files.length === 0 ? (
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 sm:gap-6">
-              {[1, 2, 3, 4].map((n) => (
-                <div key={n} className="h-64 bg-gray-200 rounded-xl animate-pulse" />
-              ))}
-            </div>
-          ) : currentFiles.length > 0 ? (
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4 sm:gap-6">
-              {currentFiles.map((file) => (
-                <FileCard 
-                  key={file.id} 
-                  file={file} 
-                  onDelete={onRequestDelete} 
-                  onNavigate={navigateTo}
-                />
-              ))}
-            </div>
-          ) : (
-            !error && (
-              <div className="text-center py-16 border border-dashed border-gray-200 rounded-xl bg-white">
-                <div className="mx-auto w-16 h-16 bg-gray-50 rounded-full flex items-center justify-center mb-4 text-gray-300">
-                  {currentPath === '/' ? <HardDrive className="w-8 h-8" /> : <FolderOpen className="w-8 h-8" />}
-                </div>
-                <h3 className="text-lg font-medium text-gray-900">
-                  {currentPath === '/' ? t('root_empty') : t('folder_empty')}
-                </h3>
-                <p className="text-gray-500 mt-1">{t('empty_hint')}</p>
-              </div>
-            )
-          )}
-        </section>
+        <FileList 
+          files={files}
+          currentPath={currentPath}
+          loading={loading}
+          error={error}
+          onNavigate={setCurrentPath}
+          onDelete={setFileToDelete}
+          onSwitchToDemo={() => {
+            enableMockMode();
+            setIsDemo(true);
+            setError(null);
+            fetchFiles();
+            setToast({ msg: t('toast_demo_mode'), type: 'success' });
+          }}
+        />
       </main>
 
-      {/* Floating Upload Progress Panel */}
-      {uploadQueue.length > 0 && (
-        <div className="fixed bottom-6 right-6 z-40 w-80 sm:w-96 bg-white rounded-lg shadow-2xl border border-gray-200 overflow-hidden flex flex-col animate-[slideUp_0.3s_ease-out]">
-            {/* Header */}
-            <div 
-                className="bg-gray-900 text-white px-4 py-3 flex items-center justify-between cursor-pointer"
-                onClick={() => setIsUploadPanelOpen(!isUploadPanelOpen)}
-            >
-                <div className="flex items-center gap-2">
-                    {activeUploads > 0 ? (
-                        <Loader2 className="w-4 h-4 animate-spin text-[#F38020]" />
-                    ) : (
-                        <CheckCircle2 className="w-4 h-4 text-green-400" />
-                    )}
-                    <span className="text-sm font-medium">
-                        {activeUploads > 0 
-                            ? `${t('upload_uploading')} (${activeUploads})` 
-                            : t('upload_complete_title')}
-                    </span>
-                </div>
-                <div className="flex items-center gap-1">
-                     {isUploadPanelOpen ? <Minimize2 className="w-4 h-4" /> : <Maximize2 className="w-4 h-4" />}
-                     {activeUploads === 0 && (
-                         <button 
-                           onClick={(e) => { e.stopPropagation(); clearCompletedUploads(); }}
-                           className="ml-2 p-1 hover:bg-gray-700 rounded text-gray-400 hover:text-white"
-                         >
-                             <X className="w-4 h-4" />
-                         </button>
-                     )}
-                </div>
-            </div>
+      <UploadQueuePanel 
+        queue={uploadQueue}
+        isOpen={isUploadPanelOpen}
+        setIsOpen={setIsUploadPanelOpen}
+        onPause={(id) => uploadControllers.current.get(id)?.pause()}
+        onResume={(id) => uploadControllers.current.get(id)?.resume()}
+        onRetry={(id) => uploadControllers.current.get(id)?.resume()}
+        onRestart={(id) => uploadControllers.current.get(id)?.start()}
+        onCancel={(id) => uploadControllers.current.get(id)?.cancel()}
+        onRemove={(id) => {
+             const ctrl = uploadControllers.current.get(id);
+             if(ctrl) ctrl.cancel();
+             uploadControllers.current.delete(id);
+             setUploadQueue(prev => prev.filter(u => u.id !== id));
+        }}
+        onClearCompleted={() => setUploadQueue(prev => prev.filter(u => u.status !== 'complete' && u.status !== 'cancelled'))}
+      />
 
-            {/* Progress Bar for Total */}
-            {activeUploads > 0 && (
-                 <div className="h-1 w-full bg-gray-800">
-                     <div 
-                        className="h-full bg-[#F38020] transition-all duration-300"
-                        style={{ width: `${totalProgress}%` }}
-                     />
-                 </div>
-            )}
+      <CreateFolderModal 
+        isOpen={isFolderModalOpen} 
+        onClose={() => setIsFolderModalOpen(false)} 
+        onSubmit={createFolderHandler} 
+      />
 
-            {/* File List */}
-            {isUploadPanelOpen && (
-                <div className="max-h-64 overflow-y-auto p-2 bg-gray-50 space-y-2">
-                    {uploadQueue.map((item) => (
-                        <div key={item.id} className="bg-white p-3 rounded border border-gray-100 shadow-sm">
-                            <div className="flex justify-between items-start mb-2">
-                                <div className="flex items-center gap-2 overflow-hidden">
-                                    <FileIcon className="w-4 h-4 text-gray-400 flex-shrink-0" />
-                                    <span className="text-xs font-medium text-gray-700 truncate" title={item.fileName}>
-                                        {item.fileName}
-                                    </span>
-                                </div>
-                                {item.status === 'complete' && <CheckCircle2 className="w-4 h-4 text-green-500 flex-shrink-0" />}
-                                {item.status === 'error' && <AlertCircle className="w-4 h-4 text-red-500 flex-shrink-0" />}
-                                {item.status === 'uploading' && <span className="text-xs text-gray-500">{Math.round(item.progress)}%</span>}
-                            </div>
-                            
-                            {/* Individual Progress */}
-                            {item.status === 'uploading' && (
-                                <div className="h-1.5 w-full bg-gray-100 rounded-full overflow-hidden">
-                                    <div 
-                                        className="h-full bg-blue-500 transition-all duration-300"
-                                        style={{ width: `${item.progress}%` }}
-                                    />
-                                </div>
-                            )}
-                            {item.status === 'error' && (
-                                <p className="text-[10px] text-red-500 mt-1">{item.error}</p>
-                            )}
-                        </div>
-                    ))}
-                </div>
-            )}
-        </div>
-      )}
+      <AuthModal 
+        isOpen={isAuthModalOpen} 
+        initialMode={authMode}
+        onClose={() => setIsAuthModalOpen(false)} 
+        onSubmit={authHandler} 
+      />
 
-      {/* New Folder Modal */}
-      {isFolderModalOpen && (
-        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-xl shadow-xl w-full max-w-sm overflow-hidden animate-[fadeIn_0.2s_ease-out]">
-            <form onSubmit={handleSubmitCreateFolder}>
-              <div className="p-6">
-                <h3 className="text-lg font-semibold text-gray-900 mb-1">{t('create_folder_title')}</h3>
-                <p className="text-sm text-gray-500 mb-4">{t('create_folder_desc')}</p>
-                <input 
-                  autoFocus
-                  type="text" 
-                  value={newFolderName}
-                  onChange={e => setNewFolderName(e.target.value)}
-                  placeholder={t('folder_name_placeholder')}
-                  className="w-full border border-gray-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-[#F38020] focus:border-transparent transition-all"
-                />
-              </div>
-              <div className="bg-gray-50 px-6 py-4 flex justify-end gap-3 border-t border-gray-100">
-                <button 
-                  type="button"
-                  onClick={() => setIsFolderModalOpen(false)}
-                  className="px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-200 rounded-lg transition-colors"
-                >
-                  {t('cancel')}
-                </button>
-                <button 
-                  type="submit"
-                  disabled={!newFolderName.trim()}
-                  className="px-4 py-2 text-sm font-medium text-white bg-[#F38020] hover:bg-[#e07015] rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                >
-                  {t('create')}
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
+      <DeleteConfirmModal 
+        file={fileToDelete} 
+        onClose={() => setFileToDelete(null)} 
+        onConfirm={deleteHandler} 
+      />
 
-      {/* Auth Modal (Login / Register) */}
-      {isAuthModalOpen && (
-        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-xl shadow-xl w-full max-w-sm overflow-hidden animate-[fadeIn_0.2s_ease-out]">
-            <form onSubmit={handleAuthSubmit}>
-              <div className="p-6">
-                <div className="flex items-center justify-between mb-4">
-                     <h3 className="text-lg font-semibold text-gray-900">
-                        {authMode === 'login' ? t('login_title') : t('register_title')}
-                     </h3>
-                     <div className="p-2 bg-indigo-100 rounded-full text-indigo-600">
-                        {authMode === 'login' ? <LogIn className="w-5 h-5" /> : <UserPlus className="w-5 h-5" />}
-                     </div>
-                </div>
-                <p className="text-sm text-gray-500 mb-4">
-                    {authMode === 'login' ? t('login_desc') : t('register_desc')}
-                </p>
-                
-                <div className="space-y-3">
-                    <div className="relative">
-                        <UserCircle className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400" />
-                        <input 
-                        autoFocus
-                        type="text" 
-                        value={authUsername}
-                        onChange={e => setAuthUsername(e.target.value)}
-                        placeholder={t('username_placeholder')}
-                        className="w-full border border-gray-300 rounded-lg pl-10 pr-3 py-2 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent transition-all"
-                        />
-                    </div>
-                    
-                    <div className="relative">
-                        <Lock className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400" />
-                        <input 
-                        type="password" 
-                        value={authPassword}
-                        onChange={e => setAuthPassword(e.target.value)}
-                        placeholder={t('password_placeholder')}
-                        className="w-full border border-gray-300 rounded-lg pl-10 pr-3 py-2 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent transition-all"
-                        />
-                    </div>
-
-                    {authMode === 'register' && (
-                        <div className="relative animate-[fadeIn_0.3s_ease-out]">
-                            <Lock className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400" />
-                            <input 
-                            type="password" 
-                            value={authConfirmPassword}
-                            onChange={e => setAuthConfirmPassword(e.target.value)}
-                            placeholder={t('confirm_password')}
-                            className="w-full border border-gray-300 rounded-lg pl-10 pr-3 py-2 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent transition-all"
-                            />
-                        </div>
-                    )}
-                </div>
-
-                {/* Toggle Mode */}
-                <div className="mt-4 text-center">
-                    <button
-                        type="button"
-                        onClick={() => {
-                            setAuthMode(authMode === 'login' ? 'register' : 'login');
-                            setError(null);
-                        }}
-                        className="text-xs text-indigo-600 hover:text-indigo-800 hover:underline"
-                    >
-                        {authMode === 'login' ? t('switch_to_register') : t('switch_to_login')}
-                    </button>
-                </div>
-
-              </div>
-              <div className="bg-gray-50 px-6 py-4 flex justify-end gap-3 border-t border-gray-100">
-                <button 
-                  type="button"
-                  onClick={() => setIsAuthModalOpen(false)}
-                  className="px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-200 rounded-lg transition-colors"
-                >
-                  {t('cancel')}
-                </button>
-                <button 
-                  type="submit"
-                  disabled={!authUsername.trim() || !authPassword.trim() || authLoading}
-                  className="px-4 py-2 text-sm font-medium text-white bg-indigo-600 hover:bg-indigo-700 rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
-                >
-                  {authLoading && <RefreshCw className="w-3 h-3 animate-spin" />}
-                  {authMode === 'login' ? t('login') : t('register')}
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
-
-      {/* Delete Confirmation Modal */}
-      {fileToDelete && (
-        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-xl shadow-xl w-full max-w-sm overflow-hidden animate-[fadeIn_0.2s_ease-out]">
-            <div className="p-6">
-                <div className="flex items-center gap-3 mb-4 text-red-600">
-                    <div className="p-2 bg-red-100 rounded-full">
-                        <Trash2 className="w-6 h-6" />
-                    </div>
-                    <h3 className="text-lg font-semibold text-gray-900">{t('delete_title')}</h3>
-                </div>
-                
-                <p className="text-sm text-gray-500 mb-2">
-                    {t('delete_confirm')} <span className="font-medium text-gray-900">"{fileToDelete.name}"</span>?
-                </p>
-                
-                {fileToDelete.type === 'directory' && (
-                    <p className="text-xs text-red-500 bg-red-50 p-2 rounded border border-red-100">
-                        {t('delete_warning')}
-                    </p>
-                )}
-            </div>
-            
-            <div className="bg-gray-50 px-6 py-4 flex justify-end gap-3 border-t border-gray-100">
-              <button 
-                type="button"
-                onClick={() => setFileToDelete(null)}
-                className="px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-200 rounded-lg transition-colors"
-              >
-                {t('cancel')}
-              </button>
-              <button 
-                type="button"
-                onClick={handleConfirmDelete}
-                className="px-4 py-2 text-sm font-medium text-white bg-red-600 hover:bg-red-700 rounded-lg transition-colors"
-              >
-                {t('delete')}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Footer / Tech Info */}
-      <footer className="py-6 text-center text-sm text-gray-400 px-4">
+      <footer className="hidden sm:block py-6 text-center text-sm text-gray-400 px-4">
         <p>{t('powered_by')}</p>
       </footer>
     </div>
