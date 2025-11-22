@@ -56,18 +56,26 @@ export default {
 				if (!body.name) return new Response('Folder name required', { status: 400, headers: corsHeaders });
 
 				const id = crypto.randomUUID();
-				// Folders are virtual in R2, we just store them in D1 to maintain structure in the UI
-				// We use the UUID as the key for consistency, though it won't map to an R2 object
-				const key = crypto.randomUUID();
 				const folderPath = body.parent || '/';
 
+				// Calculate R2 Key for the folder to create a real directory object
+				// Remove leading slash for R2 key if it exists (unless it is just root, which becomes empty prefix)
+				const prefix = folderPath === '/' ? '' : folderPath.slice(1);
+				
+				// The key must end with a slash to be treated as a directory marker in standard S3/R2 clients
+				const r2Key = `${prefix}${body.name}/`;
+
+				// Create a 0-byte object in R2 to represent the folder
+				await env.MY_BUCKET.put(r2Key, new Uint8Array(0));
+
+				// We use the r2Key as the 'key' in D1 so that delete operations work correctly on R2 as well
 				await env.DB.prepare('INSERT INTO files (id, key, name, size, type, uploadedAt, url, folder) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
-					.bind(id, key, body.name, 0, 'directory', Date.now(), '', folderPath)
+					.bind(id, r2Key, body.name, 0, 'directory', Date.now(), '', folderPath)
 					.run();
 
 				return new Response(
 					JSON.stringify({
-						file: { id, key, name: body.name, size: 0, type: 'directory', uploadedAt: Date.now(), url: '', folder: folderPath },
+						file: { id, key: r2Key, name: body.name, size: 0, type: 'directory', uploadedAt: Date.now(), url: '', folder: folderPath },
 					}),
 					{ headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
 				);
