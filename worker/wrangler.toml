@@ -1,0 +1,14 @@
+name = "backend"
+main = "src/index.ts"
+compatibility_date = "2024-01-01"
+
+# 绑定 R2
+[[r2_buckets]]
+binding = "MY_BUCKET"
+bucket_name = "oss"
+
+# 绑定 D1
+[[d1_databases]]
+binding = "DB"
+database_name = "workerbox-db"
+database_id = "036de71a-2033-4045-a6d0-03299a143756"

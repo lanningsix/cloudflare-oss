@@ -22,10 +22,10 @@ export default {
 
 		// Check for required bindings to provide helpful errors
 		if (!env.DB) {
-			return new Response(
-				JSON.stringify({ error: 'D1 Database binding "DB" is missing. Check wrangler.toml or Cloudflare Dashboard.' }),
-				{ status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-			);
+			return new Response(JSON.stringify({ error: 'D1 Database binding "DB" is missing. Check wrangler.toml or Cloudflare Dashboard.' }), {
+				status: 500,
+				headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+			});
 		}
 
 		if (!env.MY_BUCKET) {
@@ -54,7 +54,7 @@ export default {
 		// --- POST /api/folders (Create Folder) ---
 		if (request.method === 'POST' && path === '/api/folders') {
 			try {
-				const body = await request.json() as { name: string; parent: string };
+				const body = (await request.json()) as { name: string; parent: string };
 				if (!body.name) return new Response('Folder name required', { status: 400, headers: corsHeaders });
 
 				const id = crypto.randomUUID();
@@ -83,13 +83,13 @@ export default {
 			try {
 				const formData = await request.formData();
 				const file = formData.get('file') as File;
-				const folder = formData.get('folder') as string || '/';
+				const folder = (formData.get('folder') as string) || '/';
 
 				if (!file) return new Response('No file uploaded', { status: 400, headers: corsHeaders });
 
 				const id = crypto.randomUUID();
-				const uuid = crypto.randomUUID(); 
-				
+				const uuid = crypto.randomUUID();
+
 				// Extract file extension (e.g., ".jpg") to append to the key
 				const lastDotIndex = file.name.lastIndexOf('.');
 				const ext = lastDotIndex !== -1 ? file.name.substring(lastDotIndex) : '';
@@ -134,7 +134,7 @@ export default {
 				// For now, we just delete. If it's a file, delete from R2.
 				// If it's a directory (which we know by checking D1, but here we save a query),
 				// R2 delete won't fail if key doesn't exist.
-				
+
 				await env.MY_BUCKET.delete(key);
 
 				// Delete from D1
