@@ -1,0 +1,14 @@
+/* 
+  Styles are currently served via Tailwind CDN in index.html 
+  to ensure they render correctly in the preview environment.
+*/
+
+/* 
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+body {
+  @apply bg-gray-50 text-slate-800 antialiased;
+} 
+*/

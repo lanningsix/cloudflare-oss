@@ -1,0 +1,5 @@
+{
+  "name": "Cloudflare R2+D1 Manager",
+  "description": "A sleek file management interface designed for Cloudflare Workers, D1, and R2 integration. Features drag-and-drop uploads, file previews, and immediate UI feedback.",
+  "requestFramePermissions": []
+}
