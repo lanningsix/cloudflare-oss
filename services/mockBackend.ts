@@ -1,10 +1,22 @@
 import { R2File } from '../types';
+import { AuthResponse } from './authService';
 
 // This file simulates the Cloudflare Worker + D1 + R2 logic 
 // so the UI is functional without a real backend deployment.
 
 const STORAGE_KEY_D1 = 'cf_d1_mock_files_v2';
+const STORAGE_KEY_USERS = 'cf_d1_mock_users';
 const DELAY_MS = 600;
+
+// Helper to get current mock user from localStorage (imitating what fileService does)
+const getMockUser = () => {
+  const storedUser = localStorage.getItem('workerbox_user');
+  if (storedUser) {
+    return { ...JSON.parse(storedUser), type: 'user' };
+  }
+  const guestId = localStorage.getItem('workerbox_guest_id') || 'guest_default';
+  return { id: guestId, type: 'guest' };
+};
 
 const getMockStore = (): R2File[] => {
   const stored = localStorage.getItem(STORAGE_KEY_D1);
@@ -15,12 +27,65 @@ const setMockStore = (files: R2File[]) => {
   localStorage.setItem(STORAGE_KEY_D1, JSON.stringify(files));
 };
 
+// --- AUTH MOCK ---
+const getMockUsers = (): any[] => {
+  const stored = localStorage.getItem(STORAGE_KEY_USERS);
+  return stored ? JSON.parse(stored) : [];
+};
+
+export const mockLogin = async (username: string, password: string): Promise<AuthResponse> => {
+  await new Promise(resolve => setTimeout(resolve, DELAY_MS));
+  
+  // Demo: "demo" user always works if no DB
+  const users = getMockUsers();
+  const user = users.find(u => u.username === username && u.password === password);
+
+  if (user) {
+    return { user: { id: user.id, name: user.username, isGuest: false } };
+  }
+  
+  // Allow basic "demo" login if not found (fallback for easy testing)
+  if (username === 'demo' && password === 'demo') {
+      return { user: { id: 'demo_user_id', name: 'DemoUser', isGuest: false }};
+  }
+
+  throw new Error('Invalid credentials');
+};
+
+export const mockRegister = async (username: string, password: string): Promise<AuthResponse> => {
+  await new Promise(resolve => setTimeout(resolve, DELAY_MS));
+  
+  const users = getMockUsers();
+  if (users.find(u => u.username === username)) {
+    throw new Error('Username already exists');
+  }
+
+  const newUser = {
+    id: crypto.randomUUID(),
+    username,
+    password, // In real mock, we store plain text, but backend hashes it
+    created_at: Date.now()
+  };
+
+  localStorage.setItem(STORAGE_KEY_USERS, JSON.stringify([...users, newUser]));
+
+  return { user: { id: newUser.id, name: newUser.username, isGuest: false } };
+};
+
+// --- FILE MOCK ---
+
 // Simulate Worker: GET /api/files
 export const mockListFiles = async (): Promise<R2File[]> => {
   await new Promise((resolve) => setTimeout(resolve, DELAY_MS));
-  // In real SQL we sort by directory first
+  
+  const user = getMockUser();
   const files = getMockStore();
-  return files.sort((a, b) => {
+  
+  // Filter by ownerId
+  const userFiles = files.filter(f => f.ownerId === user.id);
+
+  // Sort
+  return userFiles.sort((a, b) => {
     if (a.type === 'directory' && b.type !== 'directory') return -1;
     if (a.type !== 'directory' && b.type === 'directory') return 1;
     return b.uploadedAt - a.uploadedAt;
@@ -30,6 +95,7 @@ export const mockListFiles = async (): Promise<R2File[]> => {
 export const mockCreateFolder = async (name: string, parent: string): Promise<R2File> => {
   await new Promise((resolve) => setTimeout(resolve, DELAY_MS / 2));
   const existing = getMockStore();
+  const user = getMockUser();
   
   const newFolder: R2File = {
     id: crypto.randomUUID(),
@@ -39,7 +105,8 @@ export const mockCreateFolder = async (name: string, parent: string): Promise<R2
     type: 'directory',
     uploadedAt: Date.now(),
     url: '',
-    folder: parent
+    folder: parent,
+    ownerId: user.id
   };
 
   setMockStore([newFolder, ...existing]);
@@ -51,6 +118,15 @@ export const mockUploadFile = async (file: File, folder: string = '/'): Promise<
   await new Promise((resolve) => setTimeout(resolve, DELAY_MS + (file.size / 1000)));
   
   const existing = getMockStore();
+  const user = getMockUser();
+
+  // CHECK LIMIT FOR GUESTS
+  if (user.type === 'guest') {
+    const guestFileCount = existing.filter(f => f.ownerId === user.id && f.type !== 'directory').length;
+    if (guestFileCount >= 10) {
+      throw new Error("Upload limit reached (Max 10 files for guests).");
+    }
+  }
   
   // Extract extension
   const lastDotIndex = file.name.lastIndexOf('.');
@@ -72,7 +148,8 @@ export const mockUploadFile = async (file: File, folder: string = '/'): Promise<
     type: file.type,
     uploadedAt: Date.now(),
     url: url,
-    folder: folder
+    folder: folder,
+    ownerId: user.id
   };
 
   setMockStore([newFile, ...existing]);

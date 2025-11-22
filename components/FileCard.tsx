@@ -1,14 +1,16 @@
 import React, { useState } from 'react';
 import { File as FileIcon, Image as ImageIcon, Trash2, Download, FileText, Film, Music, Copy, Check, Folder } from 'lucide-react';
 import { R2File } from '../types';
+import { useLanguage } from '../contexts/LanguageContext';
 
 interface FileCardProps {
   file: R2File;
-  onDelete: (id: string, key: string) => void;
+  onDelete: (file: R2File) => void;
   onNavigate: (path: string) => void;
 }
 
 export const FileCard: React.FC<FileCardProps> = ({ file, onDelete, onNavigate }) => {
+  const { t } = useLanguage();
   const [copied, setCopied] = useState(false);
 
   const formatSize = (bytes: number) => {
@@ -90,7 +92,7 @@ export const FileCard: React.FC<FileCardProps> = ({ file, onDelete, onNavigate }
                 <button 
                   onClick={handleCopyLink}
                   className={`p-2.5 rounded-full transition-transform hover:scale-110 ${copied ? 'bg-green-50 text-green-600' : 'bg-white text-gray-700 hover:bg-gray-100'}`}
-                  title="Copy Link"
+                  title={t('copy_link')}
                 >
                   {copied ? <Check className="w-5 h-5" /> : <Copy className="w-5 h-5" />}
                 </button>
@@ -100,7 +102,7 @@ export const FileCard: React.FC<FileCardProps> = ({ file, onDelete, onNavigate }
                   rel="noreferrer"
                   onClick={(e) => e.stopPropagation()}
                   className="p-2.5 bg-white rounded-full hover:bg-gray-100 text-gray-700 transition-transform hover:scale-110"
-                  title="Download / View"
+                  title={t('download')}
                 >
                   <Download className="w-5 h-5" />
                 </a>
@@ -109,10 +111,10 @@ export const FileCard: React.FC<FileCardProps> = ({ file, onDelete, onNavigate }
             <button 
               onClick={(e) => {
                 e.stopPropagation();
-                onDelete(file.id, file.key);
+                onDelete(file);
               }}
               className="p-2.5 bg-white rounded-full hover:bg-red-50 text-red-600 transition-transform hover:scale-110"
-              title="Delete"
+              title={t('delete_btn')}
             >
               <Trash2 className="w-5 h-5" />
             </button>
@@ -128,7 +130,7 @@ export const FileCard: React.FC<FileCardProps> = ({ file, onDelete, onNavigate }
             </h4>
           </div>
           <p className="text-xs text-gray-500 font-mono uppercase tracking-wider">
-            {isFolder ? 'FOLDER' : (file.type.split('/')[1] || 'FILE')}
+            {isFolder ? t('type_folder') : (file.type.split('/')[1] || t('type_file'))}
           </p>
         </div>
         

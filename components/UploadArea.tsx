@@ -1,5 +1,6 @@
 import React, { useState, useRef, useCallback } from 'react';
-import { UploadCloud, File as FileIcon, Loader2 } from 'lucide-react';
+import { UploadCloud, Loader2 } from 'lucide-react';
+import { useLanguage } from '../contexts/LanguageContext';
 
 interface UploadAreaProps {
   onUpload: (files: File[]) => void;
@@ -7,6 +8,7 @@ interface UploadAreaProps {
 }
 
 export const UploadArea: React.FC<UploadAreaProps> = ({ onUpload, isUploading }) => {
+  const { t } = useLanguage();
   const [isDragging, setIsDragging] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -88,10 +90,10 @@ export const UploadArea: React.FC<UploadAreaProps> = ({ onUpload, isUploading })
         
         <div className="space-y-1">
           <h3 className="text-lg font-semibold text-gray-700">
-            {isUploading ? 'Uploading to R2...' : 'Click or drag files to upload'}
+            {isUploading ? t('upload_uploading') : t('upload_idle')}
           </h3>
           <p className="text-sm text-gray-500">
-            Support for images, documents, and archives.
+            {t('upload_subtitle')}
           </p>
         </div>
       </div>

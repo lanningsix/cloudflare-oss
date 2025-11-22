@@ -1,0 +1,50 @@
+-- ===============================================================
+-- Cloudflare D1 Database Schema
+-- ===============================================================
+
+-- INSTRUCTIONS:
+-- Copy the commands below and run them in your Cloudflare D1 Console.
+-- (Dashboard > Workers & Pages > D1 > [Your Database] > Console)
+
+-- ===============================================================
+-- [CRITICAL] FIX FOR EXISTING DATABASES
+-- ===============================================================
+-- If you are updating from an older version and see errors like
+-- "no such column: owner_id", you MUST run this command first:
+
+ALTER TABLE files ADD COLUMN owner_id TEXT;
+
+-- ===============================================================
+-- TABLE SETUP (For New Installations)
+-- ===============================================================
+
+-- 1. Users Table
+CREATE TABLE IF NOT EXISTS users (
+  id TEXT PRIMARY KEY,
+  username TEXT UNIQUE,
+  password TEXT,
+  created_at INTEGER
+);
+
+-- 2. Files Table
+-- Note: If the table already exists, this command does NOT add new columns.
+-- Use the ALTER command above if you are missing 'owner_id'.
+CREATE TABLE IF NOT EXISTS files (
+  id TEXT PRIMARY KEY,
+  key TEXT,
+  name TEXT,
+  size INTEGER,
+  type TEXT,
+  uploadedAt INTEGER,
+  url TEXT,
+  folder TEXT,
+  owner_id TEXT
+);
+
+-- ===============================================================
+-- INDEXES
+-- ===============================================================
+-- These improve query performance. Run these after creating tables.
+
+CREATE INDEX IF NOT EXISTS idx_files_owner ON files(owner_id);
+CREATE INDEX IF NOT EXISTS idx_files_folder ON files(folder);

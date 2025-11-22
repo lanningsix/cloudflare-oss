@@ -7,6 +7,7 @@ export interface R2File {
   uploadedAt: number;
   url: string;
   folder: string;
+  ownerId?: string;
 }
 
 export interface UploadProgress {
