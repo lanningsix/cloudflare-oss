@@ -1,3 +1,4 @@
+
 import { R2File } from '../types';
 import { AuthResponse } from './authService';
 
@@ -114,11 +115,13 @@ export const mockCreateFolder = async (name: string, parent: string): Promise<R2
 }
 
 // Simulate Worker: POST /api/upload (Multipart)
-export const mockUploadFile = async (file: File, folder: string = '/'): Promise<R2File> => {
-  await new Promise((resolve) => setTimeout(resolve, DELAY_MS + (file.size / 1000)));
-  
-  const existing = getMockStore();
+export const mockUploadFile = async (
+  file: File, 
+  folder: string = '/', 
+  onProgress?: (percent: number) => void
+): Promise<R2File> => {
   const user = getMockUser();
+  const existing = getMockStore();
 
   // CHECK LIMIT FOR GUESTS
   if (user.type === 'guest') {
@@ -126,6 +129,15 @@ export const mockUploadFile = async (file: File, folder: string = '/'): Promise<
     if (guestFileCount >= 10) {
       throw new Error("Upload limit reached (Max 10 files for guests).");
     }
+  }
+
+  // Simulate progress
+  const totalSteps = 5;
+  for (let i = 1; i <= totalSteps; i++) {
+      await new Promise(resolve => setTimeout(resolve, 200)); // 200ms per step
+      if (onProgress) {
+          onProgress((i / totalSteps) * 100);
+      }
   }
   
   // Extract extension

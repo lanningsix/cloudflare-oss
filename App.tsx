@@ -1,9 +1,10 @@
+
 import React, { useEffect, useState, useCallback } from 'react';
 import { UploadArea } from './components/UploadArea';
 import { FileCard } from './components/FileCard';
 import { listFiles, uploadFile, deleteFile, enableMockMode, isMockMode, createFolder } from './services/fileService';
-import {R2File } from './types';
-import { Cloud, Database, HardDrive, RefreshCw, AlertCircle, CheckCircle2, X, ZapOff, FolderPlus, Home, ChevronRight, FolderOpen, Trash2, Languages, UserCircle, LogOut, LogIn, UserPlus, Lock } from 'lucide-react';
+import { R2File, UploadProgress, FileWithPath } from './types';
+import { Cloud, Database, HardDrive, RefreshCw, AlertCircle, CheckCircle2, X, ZapOff, FolderPlus, Home, ChevronRight, FolderOpen, Trash2, Languages, UserCircle, LogOut, LogIn, UserPlus, Lock, Minimize2, Maximize2, File as FileIcon, Loader2 } from 'lucide-react';
 import { useLanguage } from './contexts/LanguageContext';
 import { useAuth } from './contexts/AuthContext';
 
@@ -12,10 +13,13 @@ export default function App() {
   const { user, login, register, logout } = useAuth();
   const [files, setFiles] = useState<R2File[]>([]);
   const [loading, setLoading] = useState(true);
-  const [uploading, setUploading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [isDemo, setIsDemo] = useState(isMockMode());
   const [currentPath, setCurrentPath] = useState<string>('/');
+  
+  // Upload State
+  const [uploadQueue, setUploadQueue] = useState<UploadProgress[]>([]);
+  const [isUploadPanelOpen, setIsUploadPanelOpen] = useState(true);
   
   // Modal States
   const [isFolderModalOpen, setIsFolderModalOpen] = useState(false);
@@ -75,7 +79,7 @@ export default function App() {
   const guestUsageCount = files.filter(f => f.type !== 'directory').length;
   const isGuestLimitReached = user?.isGuest && guestUsageCount >= 10;
 
-  const handleUpload = async (filesToUpload: File[]) => {
+  const handleUpload = async (filesToUpload: FileWithPath[]) => {
     if (filesToUpload.length === 0) return;
     
     // Frontend check for guest limit
@@ -84,35 +88,62 @@ export default function App() {
       return;
     }
 
-    setUploading(true);
-    let successCount = 0;
-    let failCount = 0;
-    let limitError = false;
+    // Add to queue
+    const newUploads: UploadProgress[] = filesToUpload.map(f => ({
+      id: crypto.randomUUID(),
+      fileName: f.path || f.name,
+      progress: 0,
+      status: 'pending'
+    }));
 
-    for (const file of filesToUpload) {
-      try {
-        await uploadFile(file, currentPath);
-        successCount++;
-      } catch (err) {
-        console.error(err);
-        if (err instanceof Error && err.message.includes("limit")) {
-            limitError = true;
-        }
-        failCount++;
-      }
-    }
+    setUploadQueue(prev => [...newUploads, ...prev]);
+    setIsUploadPanelOpen(true);
 
-    setUploading(false);
+    // Process uploads sequentially or parallel (lets do semi-parallel max 3)
+    // For simplicity in this version, we loop but don't await inside the main loop to allow UI updates,
+    // but we trigger the async operations.
     
-    if (limitError) {
-        setToast({ msg: t('upload_limit_reached'), type: 'error' });
-    } else if (failCount === 0) {
-      setToast({ msg: t('toast_upload_success', { count: successCount }), type: 'success' });
-    } else {
-      setToast({ msg: t('toast_upload_fail', { success: successCount, fail: failCount }), type: 'error' });
+    const uploadBaseFolder = currentPath; // Capture current path when upload starts
+
+    for (let i = 0; i < filesToUpload.length; i++) {
+       const file = filesToUpload[i];
+       const queueId = newUploads[i].id;
+
+       // Determine target folder
+       // If file has a relative path (from recursive folder drop), we need to append it to currentPath
+       // Example: currentPath = "/docs/", file.path = "subfolder/image.png"
+       // file.name = "image.png"
+       // targetFolder should be "/docs/subfolder/"
+       
+       let targetFolder = uploadBaseFolder;
+       if (file.path) {
+           // Extract folder part from relative path
+           const lastSlash = file.path.lastIndexOf('/');
+           if (lastSlash !== -1) {
+               const relativeFolder = file.path.substring(0, lastSlash);
+               targetFolder = `${uploadBaseFolder}${relativeFolder}/`;
+           }
+       }
+
+       setUploadQueue(prev => prev.map(u => u.id === queueId ? { ...u, status: 'uploading' } : u));
+
+       try {
+          await uploadFile(file, targetFolder, (percent) => {
+             setUploadQueue(prev => prev.map(u => u.id === queueId ? { ...u, progress: percent } : u));
+          });
+          setUploadQueue(prev => prev.map(u => u.id === queueId ? { ...u, status: 'complete', progress: 100 } : u));
+       } catch (err) {
+          console.error(err);
+          let errMsg = "Failed";
+          if (err instanceof Error && err.message.includes("limit")) {
+             errMsg = "Limit Reached";
+          }
+          setUploadQueue(prev => prev.map(u => u.id === queueId ? { ...u, status: 'error', error: errMsg } : u));
+       }
     }
 
-    // Refresh list
+    // Clean up successful uploads from queue after 3 seconds (optional, maybe just keep them)
+    // fetchFiles to show new files
     fetchFiles();
   };
 
@@ -221,6 +252,11 @@ export default function App() {
     setCurrentPath(path);
   };
 
+  // Clear completed uploads
+  const clearCompletedUploads = () => {
+    setUploadQueue(prev => prev.filter(u => u.status !== 'complete'));
+  };
+
   // Generate breadcrumbs
   const breadcrumbs = React.useMemo(() => {
     const parts = currentPath.split('/').filter(Boolean);
@@ -233,8 +269,29 @@ export default function App() {
     return crumbs;
   }, [currentPath, t]);
 
+  // Calculate upload stats
+  const activeUploads = uploadQueue.filter(u => u.status === 'uploading' || u.status === 'pending').length;
+  const progressSum = uploadQueue.reduce((acc, curr) => acc + curr.progress, 0);
+  const totalProgress = uploadQueue.length > 0 ? progressSum / uploadQueue.length : 0;
+
   return (
     <div className="min-h-screen bg-gray-50 flex flex-col font-sans text-slate-800">
+      {/* Toast Notification - Top Center */}
+      {toast && (
+        <div className={`
+          fixed top-6 left-1/2 -translate-x-1/2 px-6 py-3 rounded-lg shadow-xl flex items-center justify-between gap-4 transition-all duration-300 z-[100] min-w-[320px] max-w-[90vw]
+          ${toast.type === 'success' ? 'bg-emerald-600 text-white' : 'bg-red-600 text-white'}
+        `}>
+          <div className="flex items-center gap-3">
+            {toast.type === 'success' ? <CheckCircle2 className="w-5 h-5 flex-shrink-0" /> : <AlertCircle className="w-5 h-5 flex-shrink-0" />}
+            <span className="font-medium text-sm sm:text-base">{toast.msg}</span>
+          </div>
+          <button onClick={() => setToast(null)} className="hover:bg-white/20 p-1 rounded-full transition-colors flex-shrink-0">
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+      )}
+
       {/* Header */}
       <header className="bg-white border-b border-gray-200 sticky top-0 z-20">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 min-h-[64px] py-3 flex flex-wrap items-center justify-between gap-4">
@@ -334,7 +391,7 @@ export default function App() {
       </header>
 
       {/* Main Content */}
-      <main className="flex-1 max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 w-full">
+      <main className="flex-1 max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 w-full mb-20">
         
         {/* Info Bar for Guest */}
         {user?.isGuest && (
@@ -382,7 +439,7 @@ export default function App() {
 
         {/* Upload Section */}
         <section className="mb-8 max-w-2xl mx-auto relative">
-          <UploadArea onUpload={handleUpload} isUploading={uploading} />
+          <UploadArea onUpload={handleUpload} isUploading={activeUploads > 0} />
           {isGuestLimitReached && (
               <div className="absolute inset-0 bg-white/60 backdrop-blur-[1px] flex items-center justify-center rounded-xl border-2 border-gray-200 z-10">
                   <div className="text-center p-4">
@@ -455,6 +512,85 @@ export default function App() {
           )}
         </section>
       </main>
+
+      {/* Floating Upload Progress Panel */}
+      {uploadQueue.length > 0 && (
+        <div className="fixed bottom-6 right-6 z-40 w-80 sm:w-96 bg-white rounded-lg shadow-2xl border border-gray-200 overflow-hidden flex flex-col animate-[slideUp_0.3s_ease-out]">
+            {/* Header */}
+            <div 
+                className="bg-gray-900 text-white px-4 py-3 flex items-center justify-between cursor-pointer"
+                onClick={() => setIsUploadPanelOpen(!isUploadPanelOpen)}
+            >
+                <div className="flex items-center gap-2">
+                    {activeUploads > 0 ? (
+                        <Loader2 className="w-4 h-4 animate-spin text-[#F38020]" />
+                    ) : (
+                        <CheckCircle2 className="w-4 h-4 text-green-400" />
+                    )}
+                    <span className="text-sm font-medium">
+                        {activeUploads > 0 
+                            ? `${t('upload_uploading')} (${activeUploads})` 
+                            : t('upload_complete_title')}
+                    </span>
+                </div>
+                <div className="flex items-center gap-1">
+                     {isUploadPanelOpen ? <Minimize2 className="w-4 h-4" /> : <Maximize2 className="w-4 h-4" />}
+                     {activeUploads === 0 && (
+                         <button 
+                           onClick={(e) => { e.stopPropagation(); clearCompletedUploads(); }}
+                           className="ml-2 p-1 hover:bg-gray-700 rounded text-gray-400 hover:text-white"
+                         >
+                             <X className="w-4 h-4" />
+                         </button>
+                     )}
+                </div>
+            </div>
+
+            {/* Progress Bar for Total */}
+            {activeUploads > 0 && (
+                 <div className="h-1 w-full bg-gray-800">
+                     <div 
+                        className="h-full bg-[#F38020] transition-all duration-300"
+                        style={{ width: `${totalProgress}%` }}
+                     />
+                 </div>
+            )}
+
+            {/* File List */}
+            {isUploadPanelOpen && (
+                <div className="max-h-64 overflow-y-auto p-2 bg-gray-50 space-y-2">
+                    {uploadQueue.map((item) => (
+                        <div key={item.id} className="bg-white p-3 rounded border border-gray-100 shadow-sm">
+                            <div className="flex justify-between items-start mb-2">
+                                <div className="flex items-center gap-2 overflow-hidden">
+                                    <FileIcon className="w-4 h-4 text-gray-400 flex-shrink-0" />
+                                    <span className="text-xs font-medium text-gray-700 truncate" title={item.fileName}>
+                                        {item.fileName}
+                                    </span>
+                                </div>
+                                {item.status === 'complete' && <CheckCircle2 className="w-4 h-4 text-green-500 flex-shrink-0" />}
+                                {item.status === 'error' && <AlertCircle className="w-4 h-4 text-red-500 flex-shrink-0" />}
+                                {item.status === 'uploading' && <span className="text-xs text-gray-500">{Math.round(item.progress)}%</span>}
+                            </div>
+                            
+                            {/* Individual Progress */}
+                            {item.status === 'uploading' && (
+                                <div className="h-1.5 w-full bg-gray-100 rounded-full overflow-hidden">
+                                    <div 
+                                        className="h-full bg-blue-500 transition-all duration-300"
+                                        style={{ width: `${item.progress}%` }}
+                                    />
+                                </div>
+                            )}
+                            {item.status === 'error' && (
+                                <p className="text-[10px] text-red-500 mt-1">{item.error}</p>
+                            )}
+                        </div>
+                    ))}
+                </div>
+            )}
+        </div>
+      )}
 
       {/* New Folder Modal */}
       {isFolderModalOpen && (
@@ -630,22 +766,6 @@ export default function App() {
         </div>
       )}
 
-      {/* Toast Notification */}
-      {toast && (
-        <div className={`
-          fixed bottom-6 right-6 left-6 sm:left-auto px-4 py-3 rounded-lg shadow-lg flex items-center justify-between sm:justify-start gap-3 transition-all duration-300 transform translate-y-0 z-50
-          ${toast.type === 'success' ? 'bg-emerald-600 text-white' : 'bg-red-600 text-white'}
-        `}>
-          <div className="flex items-center gap-2">
-            {toast.type === 'success' ? <CheckCircle2 className="w-5 h-5" /> : <AlertCircle className="w-5 h-5" />}
-            <span className="font-medium text-sm sm:text-base">{toast.msg}</span>
-          </div>
-          <button onClick={() => setToast(null)} className="hover:opacity-80 p-1">
-            <X className="w-4 h-4" />
-          </button>
-        </div>
-      )}
-      
       {/* Footer / Tech Info */}
       <footer className="py-6 text-center text-sm text-gray-400 px-4">
         <p>{t('powered_by')}</p>

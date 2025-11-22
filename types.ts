@@ -1,3 +1,4 @@
+
 export interface R2File {
   id: string;
   key: string;
@@ -11,11 +12,17 @@ export interface R2File {
 }
 
 export interface UploadProgress {
+  id: string; // Unique ID for the upload task
   fileName: string;
   progress: number;
-  status: 'uploading' | 'complete' | 'error';
+  status: 'pending' | 'uploading' | 'complete' | 'error';
+  error?: string;
 }
 
 export interface ApiConfig {
   workerUrl: string;
+}
+
+export interface FileWithPath extends File {
+  path?: string; // Relative path for folder uploads (e.g., "photos/vacation/img.jpg")
 }

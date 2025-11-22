@@ -1,3 +1,4 @@
+
 interface Env {
 	DB: D1Database;
 	MY_BUCKET: R2Bucket;
@@ -18,8 +19,9 @@ export default {
 		// 1. CORS Headers
 		const corsHeaders = {
 			'Access-Control-Allow-Origin': '*',
-			'Access-Control-Allow-Methods': 'GET, HEAD, POST, DELETE, OPTIONS',
+			'Access-Control-Allow-Methods': 'GET, HEAD, POST, PUT, DELETE, OPTIONS',
 			'Access-Control-Allow-Headers': 'Content-Type, X-User-Id, X-User-Type',
+            'Access-Control-Expose-Headers': 'ETag',
 		};
 
 		if (request.method === 'OPTIONS') {
@@ -48,7 +50,6 @@ export default {
 				}
 
 				// Initialize users table if not exists
-				// In production, you should run migrations via wrangler
 				await env.DB.prepare(`
 					CREATE TABLE IF NOT EXISTS users (
 						id TEXT PRIMARY KEY,
@@ -186,12 +187,109 @@ export default {
 			}
 		}
 
-		// --- POST /api/upload (Upload) ---
+        // --- MULTIPART UPLOAD ROUTES (Start) ---
+        
+        // 1. Init Multipart Upload
+        if (request.method === 'POST' && path === '/api/upload/init') {
+            try {
+                // Check limits
+                if (userType === 'guest') {
+                    const countResult = await env.DB.prepare(
+                        'SELECT COUNT(*) as count FROM files WHERE owner_id = ? AND type != "directory"'
+                    ).bind(userId).first();
+                    const count = countResult ? (countResult.count as number) : 0;
+                    if (count >= 10) {
+                        return new Response(JSON.stringify({ error: 'Upload limit reached (Max 10 files for guests).' }), { 
+                            status: 403, 
+                            headers: { ...corsHeaders, 'Content-Type': 'application/json' } 
+                        });
+                    }
+                }
+
+                const { name, folder, type } = await request.json() as any;
+                if (!name) throw new Error("Name required");
+
+                const uuid = crypto.randomUUID();
+                const lastDotIndex = name.lastIndexOf('.');
+                const ext = lastDotIndex !== -1 ? name.substring(lastDotIndex) : '';
+                const prefix = folder === '/' ? '' : folder.slice(1);
+                const key = prefix + uuid + ext;
+
+                const multipartUpload = await env.MY_BUCKET.createMultipartUpload(key, {
+                    httpMetadata: { contentType: type || 'application/octet-stream' }
+                });
+
+                return new Response(JSON.stringify({
+                    uploadId: multipartUpload.uploadId,
+                    key: key
+                }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' }});
+
+            } catch (e) {
+                return new Response(JSON.stringify({ error: (e as Error).message }), { status: 500, headers: corsHeaders });
+            }
+        }
+
+        // 2. Upload Part
+        if (request.method === 'PUT' && path === '/api/upload/part') {
+            try {
+                const uploadId = url.searchParams.get('uploadId');
+                const key = url.searchParams.get('key');
+                const partNumber = parseInt(url.searchParams.get('partNumber') || '0');
+
+                if (!uploadId || !key || !partNumber) {
+                    throw new Error("Missing uploadId, key, or partNumber");
+                }
+
+                const multipartUpload = env.MY_BUCKET.resumeMultipartUpload(key, uploadId);
+                const part = await multipartUpload.uploadPart(partNumber, request.body as ReadableStream);
+
+                return new Response(JSON.stringify({
+                    partNumber,
+                    etag: part.etag
+                }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' }});
+
+            } catch (e) {
+                return new Response(JSON.stringify({ error: (e as Error).message }), { status: 500, headers: corsHeaders });
+            }
+        }
+
+        // 3. Complete Multipart Upload
+        if (request.method === 'POST' && path === '/api/upload/complete') {
+             try {
+                const { uploadId, key, parts, name, folder, size, type } = await request.json() as any;
+
+                if (!uploadId || !key || !parts) {
+                    throw new Error("Missing completion data");
+                }
+
+                const multipartUpload = env.MY_BUCKET.resumeMultipartUpload(key, uploadId);
+                await multipartUpload.complete(parts);
+
+                const publicUrl = `https://static-oss.dundun.uno/${key}`;
+
+                // Record in DB
+                const id = crypto.randomUUID();
+                await env.DB.prepare('INSERT INTO files (id, key, name, size, type, uploadedAt, url, folder, owner_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)')
+					.bind(id, key, name, size, type, Date.now(), publicUrl, folder, userId)
+					.run();
+
+                return new Response(JSON.stringify({
+                    file: { id, key, name, size, type, uploadedAt: Date.now(), url: publicUrl, folder, ownerId: userId }
+                }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' }});
+
+             } catch (e) {
+                return new Response(JSON.stringify({ error: (e as Error).message }), { status: 500, headers: corsHeaders });
+             }
+        }
+
+        // --- MULTIPART UPLOAD ROUTES (End) ---
+
+
+		// --- POST /api/upload (Simple Upload) ---
 		if (request.method === 'POST' && path === '/api/upload') {
 			try {
 				// CHECK LIMITS FOR GUESTS
 				if (userType === 'guest') {
-					// Count files (excluding folders)
 					const countResult = await env.DB.prepare(
 						'SELECT COUNT(*) as count FROM files WHERE owner_id = ? AND type != "directory"'
 					).bind(userId).first();
