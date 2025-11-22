@@ -233,7 +233,7 @@ export default {
                         for (let i = 0; i < kDel.length; i += 1000) await env.MY_BUCKET.delete(kDel.slice(i, i+1000));
                     }
                     
-                    await env.DB.prepare(`DELETE FROM files WHERE (folder = ? OR folder LIKE ? OR id = ?) AND owner_id = ?`)
+                    await env.DB.prepare(`DELETE FROM files WHERE (folder = ? OR folder LIKE OR id = ?) AND owner_id = ?`)
                         .bind(folderPathForDb, folderPathForDb + '%', (folder as any).id, userId).run();
                 }
 
@@ -262,27 +262,45 @@ export default {
                 for (const file of results as any[]) {
                     if (file.type === 'directory') continue; // Skip folders
 
-                    // Calculate new key
                     const destPrefix = destination === '/' ? '' : destination.slice(1);
                     const oldKey = file.key;
-                    // extract filename from old key (or just use DB name)
-                    // Using DB name is safer
-                    const newKey = destPrefix + file.name;
+                    
+                    // IMPORTANT: Preserve the unique identifier (UUID) from the old key
+                    // The old key is typically "path/uuid.ext" or "uuid.ext"
+                    // We want the new key to be "newPath/uuid.ext"
+                    const keyFileName = oldKey.split('/').pop();
+                    if (!keyFileName) {
+                        console.warn(`Invalid key format for ${file.name}: ${oldKey}`);
+                        continue;
+                    }
+                    
+                    const newKey = destPrefix + keyFileName;
                     
                     if (oldKey === newKey) continue;
 
                     // R2 Copy
                     try {
+                        // 1. Verify Source Exists
                         const object = await env.MY_BUCKET.get(oldKey);
-                        if (object) {
-                            await env.MY_BUCKET.put(newKey, object.body, {
-                                httpMetadata: object.httpMetadata
-                            });
-                            await env.MY_BUCKET.delete(oldKey);
+                        if (!object) {
+                             console.warn(`Source file not found in R2: ${oldKey}`);
+                             // Do NOT update DB if file is missing in R2
+                             continue;
                         }
+
+                        // 2. Put (Copy)
+                        await env.MY_BUCKET.put(newKey, object.body, {
+                            httpMetadata: object.httpMetadata
+                        });
                         
-                        // Update DB
-                        const newUrl = `https://static-oss.dundun.uno/${newKey}`; // Hardcoded per existing patterns
+                        // 3. Delete Old (only if Put didn't throw)
+                        await env.MY_BUCKET.delete(oldKey);
+                        
+                        // 4. Update DB
+                        // Use the hardcoded domain or environment var if available. 
+                        // Ideally this should be dynamic, but sticking to pattern:
+                        const newUrl = `https://static-oss.dundun.uno/${newKey}`; 
+                        
                         await env.DB.prepare(`UPDATE files SET folder = ?, key = ?, url = ? WHERE id = ?`)
                             .bind(destination, newKey, newUrl, file.id)
                             .run();
@@ -290,6 +308,7 @@ export default {
                         movedFiles.push(file.id);
                     } catch (err) {
                         console.error(`Failed to move ${file.name}`, err);
+                        // If put/delete fails, we catch here and DO NOT update DB
                     }
                 }
 

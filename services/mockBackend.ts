@@ -202,9 +202,17 @@ export const mockMoveFiles = async (ids: string[], destination: string): Promise
     
     const updated = existing.map(f => {
         if (ids.includes(f.id) && f.type !== 'directory') {
+            const destPrefix = destination === '/' ? '' : destination.slice(1);
+            const keyFileName = f.key.split('/').pop();
+            const newKey = destPrefix + keyFileName;
+            // mock url update (simplistic)
+            const newUrl = f.url.replace(f.key, newKey);
+            
             return {
                 ...f,
-                folder: destination
+                folder: destination,
+                key: newKey,
+                url: newUrl
             };
         }
         return f;
