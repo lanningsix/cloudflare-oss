@@ -104,7 +104,7 @@ export default function App() {
 
     filesToUpload.forEach(file => {
         // Determine relative path (e.g. "MyFolder/Sub/file.txt")
-        const relativePath = file.path || (file as any).webkitRelativePath || file.name;
+        const relativePath: string = file.path || (file as any).webkitRelativePath || file.name;
         const parts = relativePath.split('/');
         
         // If only filename (len 1), no new folders needed relative to current path
@@ -114,7 +114,7 @@ export default function App() {
         const dirParts = parts.slice(0, -1);
         let currentParent = uploadBaseFolder;
 
-        dirParts.forEach(part => {
+        dirParts.forEach((part) => {
              const expectedFolderKey = `${currentParent}${part}/`;
              
              if (!foldersToCreate.has(expectedFolderKey)) {

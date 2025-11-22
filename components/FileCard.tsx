@@ -28,13 +28,6 @@ export const FileCard: React.FC<FileCardProps> = ({ file, isSelected, onToggleSe
     return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i];
   };
 
-  const formatDate = (ms: number) => {
-    return new Date(ms).toLocaleDateString(undefined, {
-      month: 'short',
-      day: 'numeric'
-    });
-  };
-
   const handleCopyLink = async (e: React.MouseEvent) => {
     e.stopPropagation();
     e.preventDefault();
@@ -111,7 +104,7 @@ export const FileCard: React.FC<FileCardProps> = ({ file, isSelected, onToggleSe
       onTouchMove={handleTouchMove}
       className={`group relative bg-white border rounded-xl overflow-hidden transition-all duration-200 flex flex-col select-none
         ${isSelected ? 'border-indigo-500 ring-2 ring-indigo-500 ring-offset-2 bg-indigo-50/10' : 'border-gray-200 shadow-sm'}
-        ${isFolder ? 'cursor-pointer hover:border-yellow-400' : ''}
+        ${isFolder ? 'cursor-pointer' : ''}
         active:scale-[0.99]
       `}
       onContextMenu={(e) => {
@@ -120,7 +113,7 @@ export const FileCard: React.FC<FileCardProps> = ({ file, isSelected, onToggleSe
       }}
     >
       {/* Preview Area */}
-      <div className="h-28 w-full bg-gray-50 flex items-center justify-center border-b border-gray-100 relative overflow-hidden">
+      <div className="h-24 sm:h-28 w-full bg-gray-50 flex items-center justify-center border-b border-gray-100 relative overflow-hidden">
         {isImage ? (
           <img 
             src={file.url} 
@@ -134,7 +127,7 @@ export const FileCard: React.FC<FileCardProps> = ({ file, isSelected, onToggleSe
       </div>
 
       {/* Info & Actions Area */}
-      <div className="p-2.5 flex flex-col flex-1">
+      <div className="p-2 sm:p-2.5 flex flex-col flex-1">
         <div className="mb-2">
           <div className="flex items-start justify-between gap-2">
             <h4 className={`font-medium truncate text-sm mb-0.5 ${isSelected ? 'text-indigo-700' : 'text-gray-900'}`} title={file.name}>
@@ -144,7 +137,6 @@ export const FileCard: React.FC<FileCardProps> = ({ file, isSelected, onToggleSe
           {!isFolder && (
             <div className="flex items-center gap-2 text-xs text-gray-400">
                 <span>{formatSize(file.size)}</span>
-                {/* Hide date on very narrow columns if needed, or keep it */}
             </div>
           )}
         </div>
@@ -155,31 +147,31 @@ export const FileCard: React.FC<FileCardProps> = ({ file, isSelected, onToggleSe
              {/* Left: Selection Checkbox */}
              <button 
                 onClick={(e) => { e.stopPropagation(); onToggleSelect(file.id); }}
-                className={`p-1.5 rounded-md transition-colors flex items-center justify-center ${isSelected ? 'text-indigo-600 bg-indigo-50' : 'text-gray-400 hover:text-gray-600 hover:bg-gray-100'}`}
+                className={`p-1 rounded-md transition-colors flex items-center justify-center ${isSelected ? 'text-indigo-600 bg-indigo-50' : 'text-gray-400 hover:text-gray-600 hover:bg-gray-100'}`}
              >
                  {isSelected ? <CheckSquare className="w-4 h-4" /> : <Square className="w-4 h-4" />}
              </button>
 
              {/* Right: File Actions */}
-             <div className="flex items-center gap-1">
+             <div className="flex items-center gap-0.5 sm:gap-1">
                 {!isFolder && (
                     <>
                         <button 
                             onClick={handleCopyLink}
-                            className={`p-1.5 rounded-md transition-colors flex items-center justify-center ${copied ? 'bg-green-50 text-green-600' : 'text-gray-400 hover:bg-gray-100 hover:text-gray-600'}`}
+                            className={`p-1 sm:p-1.5 rounded-md transition-colors flex items-center justify-center ${copied ? 'bg-green-50 text-green-600' : 'text-gray-400 hover:bg-gray-100 hover:text-gray-600'}`}
                             title={t('copy_link')}
                         >
-                            {copied ? <Check className="w-4 h-4" /> : <Copy className="w-4 h-4" />}
+                            {copied ? <Check className="w-3.5 h-3.5 sm:w-4 sm:h-4" /> : <Copy className="w-3.5 h-3.5 sm:w-4 sm:h-4" />}
                         </button>
                         <a 
                             href={file.url} 
                             target="_blank" 
                             rel="noreferrer"
                             onClick={(e) => e.stopPropagation()}
-                            className="p-1.5 rounded-md text-gray-400 hover:bg-gray-100 hover:text-gray-600 transition-colors flex items-center justify-center"
+                            className="p-1 sm:p-1.5 rounded-md text-gray-400 hover:bg-gray-100 hover:text-gray-600 transition-colors flex items-center justify-center"
                             title={t('download')}
                         >
-                            <Download className="w-4 h-4" />
+                            <Download className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
                         </a>
                     </>
                 )}
@@ -188,10 +180,10 @@ export const FileCard: React.FC<FileCardProps> = ({ file, isSelected, onToggleSe
                         e.stopPropagation();
                         onDelete(file);
                     }}
-                    className="p-1.5 rounded-md text-gray-400 hover:bg-red-50 hover:text-red-600 transition-colors flex items-center justify-center"
+                    className="p-1 sm:p-1.5 rounded-md text-gray-400 hover:bg-red-50 hover:text-red-600 transition-colors flex items-center justify-center"
                     title={t('delete_btn')}
                 >
-                    <Trash2 className="w-4 h-4" />
+                    <Trash2 className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
                 </button>
              </div>
         </div>
