@@ -1,5 +1,3 @@
-/// <reference types="@cloudflare/workers-types" />
-
 interface Env {
 	DB: D1Database;
 	MY_BUCKET: R2Bucket;
