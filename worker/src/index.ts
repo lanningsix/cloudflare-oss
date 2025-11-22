@@ -165,8 +165,11 @@ export default {
 
 				const id = crypto.randomUUID();
 				const folderPath = body.parent || '/';
-				const prefix = folderPath === '/' ? '' : folderPath.slice(1);
-				const r2Key = `${prefix}${body.name}/`;
+				
+                // Logic to generate R2 Key with User Isolation
+                const prefix = folderPath === '/' ? '' : folderPath.slice(1);
+				// We enforce user-specific directory structure in R2: userId/path/to/folder/
+				const r2Key = `${userId}/${prefix}${body.name}/`;
 
 				// Create folder marker
 				await env.MY_BUCKET.put(r2Key, new Uint8Array(0));
@@ -233,7 +236,7 @@ export default {
                         for (let i = 0; i < kDel.length; i += 1000) await env.MY_BUCKET.delete(kDel.slice(i, i+1000));
                     }
                     
-                    await env.DB.prepare(`DELETE FROM files WHERE (folder = ? OR folder LIKE OR id = ?) AND owner_id = ?`)
+                    await env.DB.prepare(`DELETE FROM files WHERE (folder = ? OR folder LIKE ? OR id = ?) AND owner_id = ?`)
                         .bind(folderPathForDb, folderPathForDb + '%', (folder as any).id, userId).run();
                 }
 
@@ -251,6 +254,10 @@ export default {
                 // Note: Destination is a folder path, e.g. '/' or '/photos/'
                 if (!fileIds || !fileIds.length) return new Response(JSON.stringify({error: 'No files'}), { status: 400, headers: corsHeaders});
 
+                // Sanitize destination to ensure it starts with /
+                // This fixes the issue where moving to "move/" resulted in "ove/" because of slice(1) on "move/"
+                const finalDest = destination.startsWith('/') ? destination : '/' + destination;
+
                 // Only supporting file moves for safety, folder moves are complex (recursive R2 copy/delete)
                 const placeholders = fileIds.map(() => '?').join(',');
                 const { results } = await env.DB.prepare(`SELECT * FROM files WHERE id IN (${placeholders}) AND owner_id = ?`)
@@ -262,19 +269,19 @@ export default {
                 for (const file of results as any[]) {
                     if (file.type === 'directory') continue; // Skip folders
 
-                    const destPrefix = destination === '/' ? '' : destination.slice(1);
+                    const destPrefix = finalDest === '/' ? '' : finalDest.slice(1);
                     const oldKey = file.key;
                     
-                    // IMPORTANT: Preserve the unique identifier (UUID) from the old key
-                    // The old key is typically "path/uuid.ext" or "uuid.ext"
-                    // We want the new key to be "newPath/uuid.ext"
+                    // Extract filename. 
+                    // We assume the key structure ends with the filename.
                     const keyFileName = oldKey.split('/').pop();
                     if (!keyFileName) {
                         console.warn(`Invalid key format for ${file.name}: ${oldKey}`);
                         continue;
                     }
                     
-                    const newKey = destPrefix + keyFileName;
+                    // Construct new key with User Isolation enforced
+                    const newKey = `${userId}/${destPrefix}${keyFileName}`;
                     
                     if (oldKey === newKey) continue;
 
@@ -297,18 +304,15 @@ export default {
                         await env.MY_BUCKET.delete(oldKey);
                         
                         // 4. Update DB
-                        // Use the hardcoded domain or environment var if available. 
-                        // Ideally this should be dynamic, but sticking to pattern:
                         const newUrl = `https://static-oss.dundun.uno/${newKey}`; 
                         
                         await env.DB.prepare(`UPDATE files SET folder = ?, key = ?, url = ? WHERE id = ?`)
-                            .bind(destination, newKey, newUrl, file.id)
+                            .bind(finalDest, newKey, newUrl, file.id)
                             .run();
                         
                         movedFiles.push(file.id);
                     } catch (err) {
                         console.error(`Failed to move ${file.name}`, err);
-                        // If put/delete fails, we catch here and DO NOT update DB
                     }
                 }
 
@@ -344,7 +348,9 @@ export default {
                 const lastDotIndex = name.lastIndexOf('.');
                 const ext = lastDotIndex !== -1 ? name.substring(lastDotIndex) : '';
                 const prefix = folder === '/' ? '' : folder.slice(1);
-                const key = prefix + uuid + ext;
+                
+                // Enforce User Isolation
+                const key = `${userId}/${prefix}${uuid}${ext}`;
 
                 const multipartUpload = await env.MY_BUCKET.createMultipartUpload(key, {
                     httpMetadata: { contentType: type || 'application/octet-stream' }
@@ -461,7 +467,9 @@ export default {
 				const lastDotIndex = file.name.lastIndexOf('.');
 				const ext = lastDotIndex !== -1 ? file.name.substring(lastDotIndex) : '';
 				const prefix = folder === '/' ? '' : folder.slice(1);
-				const key = prefix + uuid + ext;
+				
+                // Enforce User Isolation
+                const key = `${userId}/${prefix}${uuid}${ext}`;
 
 				await env.MY_BUCKET.put(key, file);
 				const publicUrl = `https://static-oss.dundun.uno/${key}`;
@@ -488,14 +496,30 @@ export default {
 				const key = decodeURIComponent(rawKey);
 				if (!key) return new Response('Invalid key', { status: 400, headers: corsHeaders });
 
-				const isDirectory = key.endsWith('/');
+                // Retrieve file metadata first to safely handle folder deletion structure
+                const fileRecord = await env.DB.prepare('SELECT * FROM files WHERE key = ? AND owner_id = ?').bind(key, userId).first();
+
+                if (!fileRecord) {
+                    // Attempt to delete from R2 anyway to clean up orphans, then return success
+                    await env.MY_BUCKET.delete(key);
+                    return new Response(JSON.stringify({ success: true }), { headers: corsHeaders });
+                }
+
+				const isDirectory = fileRecord.type === 'directory';
 
 				if (isDirectory) {
-					// Folder Delete
-					const folderPathForDb = '/' + key;
+					// Folder Delete Logic
+                    // Determine virtual path from DB record, not just from key
+                    let virtualPath = '';
+                    if (fileRecord.folder === '/') {
+                        virtualPath = `/${fileRecord.name}/`;
+                    } else {
+                        virtualPath = `${fileRecord.folder}${fileRecord.name}/`;
+                    }
+
 					const query = `SELECT key FROM files WHERE (folder = ? OR folder LIKE ?) AND owner_id = ?`;
 					const { results } = await env.DB.prepare(query)
-						.bind(folderPathForDb, folderPathForDb + '%', userId)
+						.bind(virtualPath, virtualPath + '%', userId)
 						.all();
 
 					const keysToDelete = results.map((r: any) => r.key as string);
@@ -509,7 +533,7 @@ export default {
 
 					const deleteQuery = `DELETE FROM files WHERE (folder = ? OR folder LIKE ? OR key = ?) AND owner_id = ?`;
 					await env.DB.prepare(deleteQuery)
-						.bind(folderPathForDb, folderPathForDb + '%', key, userId)
+						.bind(virtualPath, virtualPath + '%', key, userId)
 						.run();
 
 				} else {

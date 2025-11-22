@@ -200,9 +200,12 @@ export const mockMoveFiles = async (ids: string[], destination: string): Promise
     await new Promise((resolve) => setTimeout(resolve, DELAY_MS / 2));
     const existing = getMockStore();
     
+    // Sanitize destination to match real backend logic (prevents "ove" bug)
+    const finalDest = destination.startsWith('/') ? destination : '/' + destination;
+
     const updated = existing.map(f => {
         if (ids.includes(f.id) && f.type !== 'directory') {
-            const destPrefix = destination === '/' ? '' : destination.slice(1);
+            const destPrefix = finalDest === '/' ? '' : finalDest.slice(1);
             const keyFileName = f.key.split('/').pop();
             const newKey = destPrefix + keyFileName;
             // mock url update (simplistic)
@@ -210,7 +213,7 @@ export const mockMoveFiles = async (ids: string[], destination: string): Promise
             
             return {
                 ...f,
-                folder: destination,
+                folder: finalDest,
                 key: newKey,
                 url: newUrl
             };

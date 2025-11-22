@@ -38,15 +38,21 @@ export const MoveFileModal: React.FC<MoveFileModalProps> = ({
     folders.sort((a,b) => (a.folder || '/').length - (b.folder || '/').length);
 
     folders.forEach(f => {
-       const path = (f.folder === '/' ? '' : f.folder) + f.name + '/';
+       // Force ensure path starts with /
+       const parentPath = f.folder || '/';
+       let safeParent = parentPath.startsWith('/') ? parentPath : '/' + parentPath;
+       // Ensure trailing slash for parent
+       safeParent = safeParent.endsWith('/') ? safeParent : safeParent + '/';
+       
+       const path = safeParent + f.name + '/';
+
        // If this folder is being moved, skip it and its children (cant move folder into itself)
        // But we are only allowing file moves for now, so this is safe.
        
        const node = { id: f.id, name: f.name, path, children: [] };
        map.set(path, node);
 
-       const parentPath = f.folder || '/';
-       const parent = map.get(parentPath);
+       const parent = map.get(safeParent);
        if (parent) {
            parent.children.push(node);
        }
