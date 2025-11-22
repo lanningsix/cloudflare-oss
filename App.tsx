@@ -196,7 +196,7 @@ export default function App() {
       if (selectedIds.size === 0) return;
       if (!confirm(t('delete_confirm') + ` ${selectedIds.size} items?`)) return;
 
-      const ids = Array.from(selectedIds);
+      const ids = Array.from(selectedIds) as string[];
       const prev = [...files];
       setFiles(files.filter(f => !selectedIds.has(f.id)));
       setSelectedIds(new Set());
@@ -214,7 +214,7 @@ export default function App() {
   const batchMoveHandler = async (destination: string) => {
       if (selectedIds.size === 0) return;
       
-      const ids = Array.from(selectedIds);
+      const ids = Array.from(selectedIds) as string[];
       const prev = [...files];
       // Optimistic update
       setFiles(files.map(f => ids.includes(f.id) ? { ...f, folder: destination } : f));

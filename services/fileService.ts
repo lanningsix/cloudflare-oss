@@ -332,17 +332,22 @@ class LargeFileUpload implements UploadController {
             this.currentXhr = null;
         }
         
+        this.sendAbortRequest();
+        this.onStatusChange('cancelled');
+    }
+
+    private sendAbortRequest() {
         // Try to clean up on server
         if (this.uploadId && this.key) {
             const payload = { uploadId: this.uploadId, key: this.key };
+            // keepalive: true ensures the request completes even if the page is unloaded
             fetch(`${API_BASE_URL}/upload/abort`, {
                 method: 'POST',
                 headers: { ...getAuthHeaders(), 'Content-Type': 'application/json' },
-                body: JSON.stringify(payload)
+                body: JSON.stringify(payload),
+                keepalive: true
             }).catch(console.error);
         }
-
-        this.onStatusChange('cancelled');
     }
 
     private resetState() {
@@ -353,9 +358,17 @@ class LargeFileUpload implements UploadController {
         this.currentChunkIndex = 0;
     }
 
+    private beforeUnloadHandler = () => {
+        // If page is closing/refreshing while running, attempt to abort on server
+        this.sendAbortRequest();
+    };
+
     private async runUploadLoop() {
         this.isRunning = true;
         this.onStatusChange('uploading');
+        
+        // Register unload handler to cleanup if browser closes
+        window.addEventListener('beforeunload', this.beforeUnloadHandler);
 
         try {
             // 1. Init (if not done)
@@ -405,6 +418,10 @@ class LargeFileUpload implements UploadController {
 
             // 3. Complete
             await this.completeMultipart();
+            
+            // Cleanup IDs on success so we don't accidentally abort a completed file
+            this.uploadId = null;
+            this.key = null;
             this.isRunning = false;
 
         } catch (err) {
@@ -412,6 +429,8 @@ class LargeFileUpload implements UploadController {
                  this.isRunning = false;
                  this.onStatusChange('error', (err as Error).message || 'Upload failed');
             }
+        } finally {
+            window.removeEventListener('beforeunload', this.beforeUnloadHandler);
         }
     }
 

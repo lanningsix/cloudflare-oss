@@ -1,3 +1,4 @@
+/// <reference types="@cloudflare/workers-types" />
 
 interface Env {
 	DB: D1Database;
@@ -425,7 +426,14 @@ export default {
                 const { uploadId, key } = await request.json() as any;
                 if (uploadId && key) {
                     const multipartUpload = env.MY_BUCKET.resumeMultipartUpload(key, uploadId);
-                    await multipartUpload.abort();
+                    try {
+                        await multipartUpload.abort();
+                    } catch(err: any) {
+                         // Ignore "NoSuchUpload" type errors as it means it's already gone
+                        if(!err.message?.includes('NoSuchUpload')) {
+                            throw err;
+                        }
+                    }
                 }
                 return new Response(JSON.stringify({ success: true }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' }});
              } catch (e) {

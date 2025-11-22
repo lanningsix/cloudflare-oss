@@ -109,11 +109,11 @@ export const UploadArea: React.FC<UploadAreaProps> = ({ onUpload, isUploading })
 
   const handleFileSelect = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files.length > 0) {
-      const filesArray = Array.from(e.target.files).map(file => {
+      const filesArray = (Array.from(e.target.files) as File[]).map(file => {
         const f = file as FileWithPath;
         // For directory input, webkitRelativePath gives the relative path
-        if (file.webkitRelativePath) {
-          f.path = file.webkitRelativePath;
+        if ((file as any).webkitRelativePath) {
+          f.path = (file as any).webkitRelativePath;
         }
         return f;
       });
