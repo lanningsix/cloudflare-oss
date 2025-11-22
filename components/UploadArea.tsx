@@ -6,7 +6,7 @@ import { FileWithPath } from '../types';
 
 interface UploadAreaProps {
   onUpload: (files: FileWithPath[]) => void;
-  isUploading: boolean; // This prop effectively just disables interactions now
+  isUploading: boolean;
 }
 
 export const UploadArea: React.FC<UploadAreaProps> = ({ onUpload, isUploading }) => {
@@ -46,7 +46,6 @@ export const UploadArea: React.FC<UploadAreaProps> = ({ onUpload, isUploading })
     } else if (entry.isDirectory) {
       const dirReader = entry.createReader();
       return new Promise((resolve) => {
-        // readEntries might not return all entries in one call
         const readAllEntries = async () => {
           let allEntries: any[] = [];
           const readBatch = async () => {
@@ -125,12 +124,15 @@ export const UploadArea: React.FC<UploadAreaProps> = ({ onUpload, isUploading })
 
   return (
     <div
+      onClick={() => {
+        if (!isUploading) fileInputRef.current?.click();
+      }}
       onDragEnter={handleDragEnter}
       onDragOver={handleDragOver}
       onDragLeave={handleDragLeave}
       onDrop={handleDrop}
       className={`
-        relative w-full p-8 sm:p-10 rounded-xl border-2 border-dashed transition-all duration-200 ease-in-out group flex flex-col items-center justify-center text-center
+        relative w-full p-8 sm:p-10 rounded-xl border-2 border-dashed transition-all duration-200 ease-in-out group flex flex-col items-center justify-center text-center cursor-pointer
         ${isDragging 
           ? 'border-cf-orange bg-orange-50 scale-[1.01] shadow-lg' 
           : 'border-gray-300 bg-white hover:border-gray-400 hover:bg-gray-50'}
@@ -144,6 +146,7 @@ export const UploadArea: React.FC<UploadAreaProps> = ({ onUpload, isUploading })
         onChange={handleFileSelect}
         className="hidden"
         multiple
+        onClick={(e) => e.stopPropagation()}
       />
       <input
         type="file"
@@ -151,9 +154,9 @@ export const UploadArea: React.FC<UploadAreaProps> = ({ onUpload, isUploading })
         onChange={handleFileSelect}
         className="hidden"
         multiple
-        // @ts-ignore - Directory attributes are non-standard but supported
-        webkitdirectory="" 
-        directory="" 
+        // Use spread to ensure attributes are passed correctly to DOM
+        {...{ webkitdirectory: "", directory: "" } as any}
+        onClick={(e) => e.stopPropagation()}
       />
       
       <div className={`
