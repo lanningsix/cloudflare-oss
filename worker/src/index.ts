@@ -136,15 +136,47 @@ export default {
 
 				if (!key) return new Response('Invalid key', { status: 400, headers: corsHeaders });
 
-				// Check if it's a directory before deleting (optional safety)
-				// For now, we just delete. If it's a file, delete from R2.
-				// If it's a directory (which we know by checking D1, but here we save a query),
-				// R2 delete won't fail if key doesn't exist.
+				const isDirectory = key.endsWith('/');
 
-				await env.MY_BUCKET.delete(key);
+				if (isDirectory) {
+					// It is a folder. We need to perform a recursive delete.
+					// 1. Calculate the folder path prefix that children would have in the 'folder' column.
+					// The key is like 'foo/bar/'. The folder path used in 'folder' column is '/foo/bar/'.
+					const folderPathForDb = '/' + key;
 
-				// Delete from D1
-				await env.DB.prepare('DELETE FROM files WHERE key = ?').bind(key).run();
+					// 2. Find all files/folders that are inside this folder (recursively)
+					// We look for items where 'folder' is exactly this folder or starts with it (subfolders)
+					const query = `SELECT key FROM files WHERE folder = ? OR folder LIKE ?`;
+					const { results } = await env.DB.prepare(query)
+						.bind(folderPathForDb, folderPathForDb + '%')
+						.all();
+
+					const keysToDelete = results.map((r: any) => r.key as string);
+					
+					// Add the folder itself (the marker object) to the deletion list
+					keysToDelete.push(key);
+
+					// 3. Delete from R2 (in batches of 1000 to be safe, though R2 delete(string[]) handles it well)
+					const chunkSize = 1000;
+					for (let i = 0; i < keysToDelete.length; i += chunkSize) {
+						const batch = keysToDelete.slice(i, i + chunkSize);
+						if (batch.length > 0) {
+							await env.MY_BUCKET.delete(batch);
+						}
+					}
+
+					// 4. Delete from D1
+					// Delete all children rows and the folder row itself
+					const deleteQuery = `DELETE FROM files WHERE folder = ? OR folder LIKE ? OR key = ?`;
+					await env.DB.prepare(deleteQuery)
+						.bind(folderPathForDb, folderPathForDb + '%', key)
+						.run();
+
+				} else {
+					// Single file deletion
+					await env.MY_BUCKET.delete(key);
+					await env.DB.prepare('DELETE FROM files WHERE key = ?').bind(key).run();
+				}
 
 				return new Response(JSON.stringify({ success: true }), { headers: corsHeaders });
 			} catch (e) {
